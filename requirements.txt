@@ -1,0 +1,20 @@
+# Core dependencies
+strands-agents
+strands-agents-tools
+strands-agents[anthropic]
+strands-agents[openai]
+strands-agents[writer]
+strands-agents[ollama]
+strands-agents[gemini]
+python-dotenv
+Pillow
+
+
+
+# Carbon code images (local Playwright)
+playwright
+
+# Optional - uncomment as needed
+# strands-agents[otel]  # For observability/tracing
+# duckduckgo-search     # For web search tool
+# requests              # For HTTP requests
