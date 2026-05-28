@@ -1,0 +1,92 @@
+# vLLM on CPU (Mac / kind). Slow. Large image. Demo value only.
+# For real inference: see 04-vllm/lab-04-gpu-notes.md.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vllm-models
+  namespace: llm
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: llm
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: vllm } }
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels: { app: vllm }
+    spec:
+      initContainers:
+        - name: fetch-model
+          image: python:3.11-slim
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              if [ ! -d /models/tinyllama/snapshots ]; then
+                pip install --no-cache-dir huggingface_hub
+                python -c "from huggingface_hub import snapshot_download; snapshot_download('TinyLlama/TinyLlama-1.1B-Chat-v1.0', local_dir='/models/tinyllama')"
+              fi
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --model=/models/tinyllama
+            - --dtype=float32
+            - --device=cpu
+            - --max-model-len=1024
+            - --host=0.0.0.0
+            - --port=8000
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: models
+              mountPath: /models
+          resources:
+            requests: { cpu: "2", memory: "4Gi" }
+            limits:   { cpu: "4", memory: "8Gi" }
+          startupProbe:
+            httpGet: { path: /v1/models, port: 8000 }
+            failureThreshold: 120
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /v1/models, port: 8000 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /v1/models, port: 8000 }
+            periodSeconds: 30
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: vllm-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm
+  namespace: llm
+spec:
+  selector: { app: vllm }
+  ports:
+    - port: 8000
+      targetPort: 8000

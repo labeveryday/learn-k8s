@@ -1,0 +1,95 @@
+# Capstone manifest for Phase 3: the Phase 2 Compose app, re-expressed in K8s.
+# Prereq: load your locally-built image into kind:
+#   cd 02-docker/project-fastapi-redis && docker build -t learn-k8s/api:0.1 .
+#   kind load docker-image learn-k8s/api:0.1 --name learn
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+  namespace: demo
+data:
+  REDIS_HOST: cache
+  REDIS_PORT: "6379"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache
+  namespace: demo
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: cache } }
+  template:
+    metadata: { labels: { app: cache } }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+          livenessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { cpu: 200m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cache
+  namespace: demo
+spec:
+  selector: { app: cache }
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: demo
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: api } }
+  template:
+    metadata: { labels: { app: api } }
+    spec:
+      containers:
+        - name: api
+          image: learn-k8s/api:0.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: api-config
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            periodSeconds: 10
+            initialDelaySeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: demo
+spec:
+  selector: { app: api }
+  ports:
+    - port: 8000
+      targetPort: 8000

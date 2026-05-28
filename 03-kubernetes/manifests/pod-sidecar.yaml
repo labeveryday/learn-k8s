@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sidecar-demo
+spec:
+  volumes:
+    - name: shared
+      emptyDir: {}
+  containers:
+    - name: writer
+      image: busybox:1.36
+      command: ["sh", "-c", "i=0; while true; do echo hello-$i > /data/msg; i=$((i+1)); sleep 2; done"]
+      volumeMounts:
+        - name: shared
+          mountPath: /data
+    - name: reader
+      image: busybox:1.36
+      command: ["sh", "-c", "while true; do cat /data/msg 2>/dev/null; sleep 2; done"]
+      volumeMounts:
+        - name: shared
+          mountPath: /data

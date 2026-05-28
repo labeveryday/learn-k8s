@@ -1,0 +1,9 @@
+FROM python:3.11-slim                # base image (a layer chain)
+WORKDIR /app                         # cd /app for subsequent commands
+COPY requirements.txt .              # add file from build context
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8000                          # documentation, not enforcement
+ENV PYTHONUNBUFFERED=1               # env var
+USER 1000:1000                       # run as non-root
+CMD ["python", "-m", "http.server", "8000"]

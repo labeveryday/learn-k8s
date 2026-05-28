@@ -1,0 +1,25 @@
+services:
+  api:
+    build: .
+    image: learn-k8s/api:0.1
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: "6379"
+    depends_on:
+      cache:
+        condition: service_healthy
+
+  cache:
+    image: redis:7-alpine
+    volumes:
+      - cachedata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  cachedata:
