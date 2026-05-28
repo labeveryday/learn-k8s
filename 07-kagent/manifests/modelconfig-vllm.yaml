@@ -1,0 +1,25 @@
+# modelconfig-vllm.yaml — tell kagent how to reach your model.
+# baseUrl points at the in-cluster vLLM (OpenAI-compatible). Point it at your Phase 06
+# gateway host instead to inherit token limits + prompt guards on every agent call.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vllm-api-key
+  namespace: kagent
+type: Opaque
+stringData:
+  # Local vLLM ignores the key; kagent still expects the field to exist.
+  api-key: "not-needed-for-local-vllm"
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: vllm
+  namespace: kagent
+spec:
+  provider: OpenAI
+  model: "Qwen/Qwen2.5-0.5B-Instruct"
+  apiKeySecret: vllm-api-key
+  apiKeySecretKey: api-key
+  openAI:
+    baseUrl: "http://vllm.default.svc.cluster.local:8000/v1"

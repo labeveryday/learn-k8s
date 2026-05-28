@@ -1,0 +1,75 @@
+# vllm-gpu.yaml — the Phase 06 vLLM Deployment, GPU edition.
+# Diff vs 06-ai-gateway/manifests/vllm-deploy.yaml: real model, GPU dtype, and an
+# nvidia.com/gpu limit. No nodeSelector/toleration is needed — LKE does NOT auto-taint
+# GPU nodes, and the nvidia.com/gpu limit alone schedules the pod onto the GPU node.
+# Service name/port stay compatible so every gateway/agent/shim from earlier phases works
+# unchanged (point them at vllm-gpu). Sized for a g2-gpu-rtx4000a1-s node (4 vCPU, 16 GB).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-gpu
+  namespace: default
+  labels:
+    app: vllm-gpu
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-gpu
+  template:
+    metadata:
+      labels:
+        app: vllm-gpu
+    spec:
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:latest
+          args:
+            - "--model"
+            - "meta-llama/Llama-3.2-1B-Instruct"
+            - "--dtype"
+            - "bfloat16"
+            - "--max-model-len"
+            - "8192"
+          env:
+            # meta-llama/Llama-3.2-1B-Instruct is GATED on Hugging Face — vLLM needs a
+            # token to pull it. Create the Secret first (lab-03 Step 3):
+            #   kubectl create secret generic hf-token --from-literal=token=hf_...
+            # optional:false makes the pod fail fast if the Secret is missing.
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+                  optional: false
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 60
+          resources:
+            limits:
+              # One GPU; memory kept under the g2-gpu-rtx4000a1-s node's 16 GB so the pod
+              # stays schedulable (the 1B model + KV cache fits comfortably).
+              nvidia.com/gpu: 1
+              memory: 12Gi
+            requests:
+              cpu: "2"
+              memory: 8Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-gpu
+  namespace: default
+  labels:
+    app: vllm-gpu
+spec:
+  selector:
+    app: vllm-gpu
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000

@@ -1,0 +1,38 @@
+# kong-ai-route.yaml — Gateway + HTTPRoute on the Kong GatewayClass for LLM traffic.
+# Identical in shape to 05-gateway-api/manifests/kong-gateway.yaml; the ai-proxy plugin
+# (separate file) is what makes this route "AI".
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: kong-llm
+  namespace: default
+spec:
+  gatewayClassName: kong
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        from: All
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kong-llm
+  namespace: default
+  annotations:
+    konghq.com/plugins: ai-proxy-vllm
+spec:
+  parentRefs:
+    - name: kong-llm
+  hostnames:
+    - "llm.example.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1
+      # ai-proxy rewrites the upstream; this backendRef is a placeholder target.
+      backendRefs:
+        - name: vllm
+          port: 8000

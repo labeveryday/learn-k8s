@@ -1,0 +1,26 @@
+# kgateway-ai-backend.yaml — describe vLLM as an OpenAI-protocol AI Backend.
+#
+# This is the agentgateway AI backend CRD (agentgateway.dev/v1alpha1), which the
+# agentgateway data plane consumes in kgateway 2.2+. vLLM speaks the OpenAI protocol,
+# so we use the `openai` provider. For a SELF-HOSTED endpoint the host/port live on the
+# provider block (siblings of `openai`), NOT on the HTTPRoute backendRef:
+#   spec.ai.provider.openai.model   — the model name vLLM serves
+#   spec.ai.provider.host           — the in-cluster vLLM Service host
+#   spec.ai.provider.port           — the vLLM Service port
+# Local vLLM needs no API key, so no auth is set. For a HOSTED provider you'd drop
+# host/port (agentgateway defaults to api.openai.com:443) and add
+#   spec.ai.policies.auth.secretRef: {name: <secret>}
+# — the SAME object, different target (the provider-abstraction story).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: vllm-ai
+  namespace: default
+spec:
+  ai:
+    provider:
+      openai:
+        model: "Qwen/Qwen2.5-0.5B-Instruct"
+      # Point the OpenAI protocol at the in-cluster vLLM Service instead of api.openai.com.
+      host: vllm.default.svc.cluster.local
+      port: 8000

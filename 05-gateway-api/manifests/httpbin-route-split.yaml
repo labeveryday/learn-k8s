@@ -1,0 +1,37 @@
+# 80/20 weighted split between httpbin (v1) and httpbin-v2 (v2).
+# Each backendRef injects an X-Version request header (v1/v2), which go-httpbin echoes
+# back in the /get JSON. The header reflects which route weight was picked, letting you
+# watch the ratio track the weights — it demonstrates weighted routing, not a strict
+# per-pod attribution. Change the weights and re-apply to see the ratio move.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: httpbin
+spec:
+  parentRefs:
+  - name: http
+    namespace: kgateway-system
+  hostnames:
+  - httpbin.example.com
+  rules:
+  - matches:
+    - path: { type: PathPrefix, value: / }
+    backendRefs:
+    - name: httpbin
+      port: 8000
+      weight: 80
+      filters:
+      - type: RequestHeaderModifier
+        requestHeaderModifier:
+          set:
+          - name: X-Version
+            value: v1
+    - name: httpbin-v2
+      port: 8000
+      weight: 20
+      filters:
+      - type: RequestHeaderModifier
+        requestHeaderModifier:
+          set:
+          - name: X-Version
+            value: v2

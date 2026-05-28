@@ -1,0 +1,25 @@
+# kgateway-token-ratelimit.yaml — meter the route by TOKENS, not request count.
+# This is the line a plain HTTP gateway cannot express.
+#
+# Real path: on the agentgateway data plane, LLM token rate limiting lives under
+# `spec.traffic.rateLimit.local` on an AgentgatewayPolicy. Each entry sets a `tokens`
+# budget per `unit` (Seconds | Minutes | Hours). For AI backends agentgateway reads the
+# LLM response `usage` field and accumulates prompt + completion tokens against the
+# budget — so a 5-token request and a 500-token request cost differently. (A request-
+# based limit would use `requests:` instead of `tokens:` on the same entry.)
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: llm-token-budget
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: llm
+  traffic:
+    rateLimit:
+      local:
+        # ~500 LLM tokens per minute, counted from each response's usage field.
+        - tokens: 500
+          unit: Minutes

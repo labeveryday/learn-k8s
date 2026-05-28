@@ -1,0 +1,70 @@
+# vllm-deploy.yaml — OpenAI-compatible vLLM server (CPU, tiny CHAT model) for kind.
+# On LKE (Phase 09) you swap the image/model/resources for a GPU build; the Service
+# contract (port 8000, /v1 OpenAI API) stays identical.
+#
+# Image note: vllm/vllm-openai-cpu:latest-x86_64 is the prebuilt CPU server image.
+# On Apple Silicon / arm64 kind nodes use vllm/vllm-openai-cpu:latest-aarch64 instead.
+# Do NOT set VLLM_TARGET_DEVICE — it is a *build-time* flag and a no-op at runtime;
+# the CPU image is already built for CPU.
+#
+# Model note: Qwen/Qwen2.5-0.5B-Instruct is an instruct/chat-tuned model, so the
+# /v1/chat/completions endpoint (with a "messages" array) works. Plain base models
+# like facebook/opt-125m only serve /v1/completions and 400 on chat.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: default
+  labels:
+    app: vllm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+    spec:
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai-cpu:latest-x86_64
+          args:
+            - "--model"
+            - "Qwen/Qwen2.5-0.5B-Instruct"
+            - "--dtype"
+            - "float32"            # CPU has no bf16/fp16 path
+            - "--max-model-len"
+            - "1024"
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 60   # CPU model load + HF download is slow
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm
+  namespace: default
+  labels:
+    app: vllm
+spec:
+  selector:
+    app: vllm
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000

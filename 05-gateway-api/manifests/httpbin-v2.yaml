@@ -1,0 +1,39 @@
+# A second copy of the demo app, used for the traffic-split lab.
+# Identical image. The route injects an X-Version header per backend so you can watch
+# the weighted split shift traffic between v1 and v2 — it demonstrates weighted routing,
+# not a definitive proof of which pod handled each request.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbin-v2
+  labels: { app: httpbin-v2 }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: httpbin-v2 }
+  template:
+    metadata:
+      labels: { app: httpbin-v2 }
+    spec:
+      containers:
+      - name: httpbin
+        image: mccutchen/go-httpbin:v2.15.0
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet: { path: /get, port: 8080 }
+          initialDelaySeconds: 2
+        resources:
+          requests: { cpu: 50m, memory: 64Mi }
+          limits:   { cpu: 200m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbin-v2
+spec:
+  selector: { app: httpbin-v2 }
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8080

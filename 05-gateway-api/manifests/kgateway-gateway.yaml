@@ -1,0 +1,16 @@
+# A Gateway implemented by kgateway. One HTTP listener on :80.
+# kgateway will create a data-plane Service (Envoy) for this Gateway.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: http
+  namespace: kgateway-system
+spec:
+  gatewayClassName: kgateway
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: All

@@ -1,0 +1,56 @@
+# vllm-second-model.yaml — a SECOND CPU chat model so you can demo multi-model routing.
+# Distinct instruct model from vllm-deploy.yaml (TinyLlama vs Qwen) so routing by the
+# request body "model" value is observable. Both serve /v1/chat/completions.
+# arm64 nodes: swap the image tag for vllm/vllm-openai-cpu:latest-aarch64.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-b
+  namespace: default
+  labels:
+    app: vllm-b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-b
+  template:
+    metadata:
+      labels:
+        app: vllm-b
+    spec:
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai-cpu:latest-x86_64
+          args:
+            - "--model"
+            - "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+            - "--dtype"
+            - "float32"
+            - "--max-model-len"
+            - "1024"
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 60   # CPU model load + HF download is slow
+          resources:
+            requests: { cpu: "2", memory: 4Gi }
+            limits: { cpu: "4", memory: 8Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-b
+  namespace: default
+  labels:
+    app: vllm-b
+spec:
+  selector:
+    app: vllm-b
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000

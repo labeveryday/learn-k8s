@@ -7,11 +7,19 @@ A fast-track, offline-first curriculum designed by a panel:
 
 ## Target outcome
 
-After this curriculum you can:
+The **core curriculum (Phases 00–04)** gets you to a confident operator. After it you can:
 1. Operate confidently in a Linux shell and reason about processes, files, and networking.
 2. Build, run, and debug Docker containers and multi-service Compose stacks.
 3. Run a local Kubernetes cluster, deploy apps with raw manifests, and debug them with `kubectl`.
 4. Deploy an LLM inference workload (vLLM, CPU-mode on Mac) behind a K8s Service, with probes, limits, and basic autoscaling.
+
+The **optional Platform Track (Phases 05–09)** adds the layer above the workload — the
+platform other people call. After it you can also:
+5. Route traffic with the **Gateway API** standard (kgateway, Kong) instead of legacy Ingress.
+6. Put vLLM behind an **AI gateway** with token rate limits, multi-model routing, and prompt guards.
+7. Run **AI agents as Kubernetes resources** (kagent) that call your own vLLM and MCP tools.
+8. Build and run **WebAssembly** workloads on k8s with Spin / SpinKube.
+9. Take the whole stack to **Akamai LKE** — NodeBalancer, Block Storage CSI, and GPU node pools.
 
 ## Pacing
 
@@ -24,6 +32,8 @@ Phase weights (of total time): Linux 15%, Docker 20%, Kubernetes 50%, vLLM 15%.
 
 ## Structure
 
+The **core curriculum** is Phases 00–04 — that's the part everyone should do:
+
 ```
 00-prep/        One-time setup + offline caching (needs internet)
 01-linux/       Shell, processes, networking, namespaces/cgroups
@@ -32,6 +42,25 @@ Phase weights (of total time): Linux 15%, Docker 20%, Kubernetes 50%, vLLM 15%.
 04-vllm/        Capstone: LLM serving on Kubernetes
 reference/      Cheatsheets — keep these open while working
 ```
+
+### Platform Track (Phases 05–09) — optional second half
+
+Once the core is solid, the Platform Track builds the **platform layer** on top of the
+workload: the gateways, AI gateway, agents, and managed infra that turn "I can run a
+pod" into "I run an AI platform other people can call." These layers stack — each phase
+is one floor of the same building.
+
+```
+05-gateway-api/  Gateway API standard (replaces Ingress); kgateway + Kong
+06-ai-gateway/   vLLM behind an AI gateway: token limits, multi-model routing, prompt guards
+07-kagent/       AI agents as Kubernetes resources (Agent/Tool CRDs) that call your vLLM
+08-spinkube/     WebAssembly workloads on k8s via Spin / SpinKube (millisecond cold starts)
+09-lke-akamai/   The whole stack on Akamai LKE: NodeBalancer, Block Storage CSI, GPU node pools
+```
+
+**Read [`PLATFORM-TRACK.md`](./PLATFORM-TRACK.md) first** — it has the full mental model
+(the request-path diagram and how kgateway, Kong, vLLM, kagent, and Spin actually relate),
+the prerequisites, and a suggested pace. Don't start 05 without it.
 
 Each phase folder has its own `README.md` with objectives, a reading list, and numbered labs. Do the labs in order; each builds on the last.
 
@@ -51,6 +80,8 @@ Each phase folder has its own `README.md` with objectives, a reading list, and n
 1. Do `00-prep/README.md` while you still have internet.
 2. Then `01-linux/README.md`.
 3. Don't skip labs. Don't copy-paste without reading. Break things on purpose.
+4. Finish the core (00–04) before touching the Platform Track. When you're ready for the
+   second half, read [`PLATFORM-TRACK.md`](./PLATFORM-TRACK.md), then start `05-gateway-api/README.md`.
 
 ## Panel notes
 

@@ -1,0 +1,93 @@
+# kgateway-multimodel-route.yaml — ONE endpoint, fanned out to TWO models by the
+# request body's "model" value. This is lab-04 Part A's marquee mechanism.
+#
+# How body-based routing works on agentgateway: a route match cannot read a JSON body
+# field directly, so a PreRouting AgentgatewayPolicy on the GATEWAY extracts
+# `json(request.body).model` into a header (x-llm-model) BEFORE route selection runs.
+# The HTTPRoute then does ordinary header matching on that extracted header to pick the
+# backend. (spec.traffic.phase MUST be PreRouting and the policy MUST target the
+# Gateway, or the header arrives too late to match on.)
+#
+#   model: "Qwen/Qwen2.5-0.5B-Instruct"        -> vllm-ai   (Service vllm)
+#   model: "TinyLlama/TinyLlama-1.1B-Chat-v1.0" -> vllm-b-ai (Service vllm-b)
+---
+# 1) Second AI backend, pointing at the vllm-b Service. host/port are siblings of
+#    `openai` under spec.ai.provider — same shape as kgateway-ai-backend.yaml.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: vllm-b-ai
+  namespace: default
+spec:
+  ai:
+    provider:
+      openai:
+        model: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+      host: vllm-b.default.svc.cluster.local
+      port: 8000
+---
+# 2) PreRouting policy on the Gateway: lift the body "model" field into a header so the
+#    route can match on it. The CEL expression reads the parsed JSON request body.
+#    transformation.request.set is a LIST of {name, value} entries.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: extract-model
+  namespace: kgateway-system
+  labels:
+    app: agentgateway
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: http
+  traffic:
+    phase: PreRouting
+    transformation:
+      request:
+        set:
+          - name: "x-llm-model"
+            value: 'json(request.body).model'
+---
+# 3) HTTPRoute with two rules, each matching the extracted x-llm-model header and
+#    sending to a different AI backend. First match wins.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: llm-multimodel
+  namespace: default
+spec:
+  parentRefs:
+    - name: http
+      namespace: kgateway-system
+  # Distinct hostname from the single-model route (llm.example.com) so the two
+  # HTTPRoutes don't collide on the same path. Send the curl with this Host header.
+  hostnames:
+    - "multimodel.example.com"
+  rules:
+    # Qwen -> vllm-ai
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/chat/completions
+          headers:
+            - type: RegularExpression
+              name: x-llm-model
+              value: "^Qwen/.*"
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: vllm-ai
+    # TinyLlama -> vllm-b-ai
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/chat/completions
+          headers:
+            - type: RegularExpression
+              name: x-llm-model
+              value: "^TinyLlama/.*"
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: vllm-b-ai

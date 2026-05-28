@@ -1,0 +1,35 @@
+# kgateway-prompt-guard.yaml — reject prompts matching a PII-shaped pattern,
+# enforced in the gateway so every model behind it is protected at once.
+#
+# On the agentgateway data plane the AI prompt-guard policy is an AgentgatewayPolicy
+# (agentgateway.dev/v1alpha1) with the AI config nested under `spec.backend.ai`.
+#   spec.backend.ai.promptGuard.request  is a LIST of guard rules.
+#   each rule's regex.action is one of the CRD enum values [Mask, Reject] (PascalCase —
+#   the validator rejects the all-caps REJECT some older docs show).
+#   regex.matches is a LIST OF OBJECTS, each with `pattern` (the regex) + `name` (label).
+# (For PII masking instead of rejecting, set action: Mask, or use regex.builtins:
+#  [Ssn, CreditCard, Email, PhoneNumber, CaSin] for the shipped patterns.)
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: llm-prompt-guard
+  namespace: default
+  labels:
+    app: agentgateway
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: llm
+  backend:
+    ai:
+      promptGuard:
+        request:
+          - response:
+              message: "Rejected: request appears to contain a US SSN."
+            regex:
+              # Deny anything that looks like a US SSN. Tune carefully — see "Break it".
+              action: Reject
+              matches:
+                - pattern: '\b\d{3}-\d{2}-\d{4}\b'
+                  name: ssn

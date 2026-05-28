@@ -1,0 +1,22 @@
+# kong-ai-proxy-plugin.yaml — turn a Kong route into an OpenAI-protocol LLM proxy.
+# Swap provider/model/upstream_url to put a hosted model behind the same route.
+# route_type "llm/v1/chat" matches the chat models from vllm-deploy.yaml and the
+# /v1/chat/completions endpoint the rest of Phase 06 uses.
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: ai-proxy-vllm
+  namespace: default
+plugin: ai-proxy
+config:
+  route_type: "llm/v1/chat"
+  model:
+    provider: openai
+    name: Qwen/Qwen2.5-0.5B-Instruct
+    options:
+      # Point Kong's ai-proxy at the in-cluster vLLM service's chat endpoint.
+      upstream_url: "http://vllm.default.svc.cluster.local:8000/v1/chat/completions"
+  # Local vLLM needs no key; for a hosted provider, reference a header/secret here.
+  auth:
+    header_name: Authorization
+    header_value: "Bearer not-needed-for-local-vllm"

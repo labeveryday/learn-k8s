@@ -1,0 +1,33 @@
+# agent-with-tools.yaml — the lab-02 agent, now granted tools from a RemoteMCPServer.
+# Changing capabilities is a `kubectl apply`, not a rebuild.
+#
+# v1alpha2: `type: Declarative` with model/prompt/tools under `declarative:`. Tools use a
+# structured reference to a RemoteMCPServer (the ToolServer kind was removed). Here we
+# point at the built-in `kagent-tool-server` that the Helm install creates in the kagent
+# namespace — no custom MCP app to author.
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: k8s-helper
+  namespace: kagent
+spec:
+  description: "A concise Kubernetes helper that can inspect the cluster."
+  type: Declarative
+  declarative:
+    modelConfig: vllm
+    systemMessage: |
+      You are a concise Kubernetes assistant with read access to the cluster.
+      Use your tools to check real state before answering. Answer in one or two sentences.
+    tools:
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: kagent-tool-server
+          # Limit which discovered tools this agent may call. Confirm the exact names
+          # your kagent version exposes with:
+          #   kubectl describe remotemcpserver kagent-tool-server -n kagent
+          toolNames:
+            - list_pods
+            - get_pod
+            - list_events

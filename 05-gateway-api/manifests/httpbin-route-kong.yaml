@@ -1,0 +1,17 @@
+# Same app, routed via Kong. Different hostname so it doesn't collide with the
+# kgateway route. The konghq.com/plugins annotation is added in lab 03 step 4.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: httpbin-kong
+spec:
+  parentRefs:
+  - name: kong
+  hostnames:
+  - httpbin.kong.example.com
+  rules:
+  - matches:
+    - path: { type: PathPrefix, value: / }
+    backendRefs:
+    - name: httpbin
+      port: 8000

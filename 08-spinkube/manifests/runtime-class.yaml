@@ -1,0 +1,9 @@
+# runtime-class.yaml — reference copy of the Spin RuntimeClass.
+# Normally applied straight from the spin-operator release (lab-02 Step 3); kept here so
+# you can read what makes a node run Wasm: a handler that points at the spin shim.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: wasmtime-spin-v2
+# The containerd handler installed on the node (the shim binary, lab-02 Step 1).
+handler: spin

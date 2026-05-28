@@ -1,11 +1,5 @@
-kubernetes-thw-jumbox
-- 172.237.146.68
+# Moved
 
-kubernetes-thw-controller
-- 10.0.0.3
+The LKE provisioning workflow now lives in [`09-lke-akamai/lab-01-provision-lke.md`](./09-lke-akamai/lab-01-provision-lke.md).
 
-kubernetes-thw-worker-01
-- 10.0.0.4
-
-kubernetes-thw-worker-02
-- 10.0.0.5
+This file is retained only as a pointer to that lab.
