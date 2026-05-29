@@ -43,7 +43,7 @@ The **core curriculum** is Phases 00–04 — that's the part everyone should do
 reference/      Cheatsheets — keep these open while working
 ```
 
-### Platform Track (Phases 05–09) — optional second half
+### Platform Track (Phases 05–11) — optional second half
 
 Once the core is solid, the Platform Track builds the **platform layer** on top of the
 workload: the gateways, AI gateway, agents, and managed infra that turn "I can run a
@@ -56,6 +56,8 @@ is one floor of the same building.
 07-kagent/       AI agents as Kubernetes resources (Agent/Tool CRDs) that call your vLLM
 08-spinkube/     WebAssembly workloads on k8s via Spin / SpinKube (millisecond cold starts)
 09-lke-akamai/   The whole stack on Akamai LKE: NodeBalancer, Block Storage CSI, GPU node pools
+10-rag/          RAG Q&A over your data: embeddings + vector store (Qdrant), generation through your gateway, agentic retrieval
+11-observability/  See the platform: metrics, traces, and an eval quality score across every layer (Prometheus, Grafana, OTel, Tempo)
 ```
 
 **Read [`PLATFORM-TRACK.md`](./PLATFORM-TRACK.md) first** — it has the full mental model

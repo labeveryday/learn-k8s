@@ -1,0 +1,103 @@
+# grafana-dashboard-llm.yaml — the LLM golden-signals dashboard, as a ConfigMap.
+#
+# The Grafana sidecar watches for ConfigMaps labeled `grafana_dashboard: "1"` and
+# imports the embedded JSON as a dashboard automatically. This is "dashboards as code":
+# the dashboard lives in git, not in someone's browser.
+#
+# Apply: kubectl apply -f manifests/grafana-dashboard-llm.yaml
+# Then in Grafana: Dashboards > "LLM Golden Signals (vLLM)".
+#
+# Panels map to the four LLM golden signals + cost + an SLO, all from vLLM's `vllm:`
+# series and the Strands quality metric (lab-03):
+#   - In-flight load   : vllm:num_requests_running / vllm:num_requests_waiting (gauges)
+#   - Latency (TTFT)   : histogram_quantile over vllm:time_to_first_token_seconds_bucket
+#   - Throughput       : rate(vllm:generation_tokens_total[1m])
+#   - Token cost        : token counters * a price constant (lab-03)
+#   - Quality           : strands_eval_score (pushed by the Strands meter, lab-03)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-llm
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  llm-golden-signals.json: |
+    {
+      "title": "LLM Golden Signals (vLLM)",
+      "uid": "llm-golden-signals",
+      "schemaVersion": 39,
+      "editable": true,
+      "time": { "from": "now-30m", "to": "now" },
+      "refresh": "10s",
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "In-flight requests (running vs waiting)",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "vllm:num_requests_running", "legendFormat": "running" },
+            { "expr": "vllm:num_requests_waiting", "legendFormat": "waiting (queue)" }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Time to first token (p50 / p95 / p99)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s" } },
+          "targets": [
+            { "expr": "histogram_quantile(0.50, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket[5m])))", "legendFormat": "p50" },
+            { "expr": "histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket[5m])))", "legendFormat": "p95" },
+            { "expr": "histogram_quantile(0.99, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket[5m])))", "legendFormat": "p99" }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Throughput (tokens/sec)",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "rate(vllm:prompt_tokens_total[1m])", "legendFormat": "prompt tok/s" },
+            { "expr": "rate(vllm:generation_tokens_total[1m])", "legendFormat": "generation tok/s" }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Estimated cost ($/min)  —  edit the price constants in the expr",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "currencyUSD" } },
+          "targets": [
+            {
+              "expr": "(rate(vllm:prompt_tokens_total[1m]) * 60 * 0.0000005) + (rate(vllm:generation_tokens_total[1m]) * 60 * 0.0000015)",
+              "legendFormat": "$/min (in*0.5e-6 + out*1.5e-6 per token)"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Quality score (Strands eval, 0-1)",
+          "gridPos": { "h": 6, "w": 12, "x": 0, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "min": 0, "max": 1, "unit": "percentunit" } },
+          "targets": [
+            { "expr": "avg_over_time(strands_eval_score[15m])", "legendFormat": "avg quality" }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Gateway 5xx rate (error SLO)",
+          "gridPos": { "h": 6, "w": 12, "x": 12, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 3 } },
+          "targets": [
+            {
+              "expr": "sum(rate(envoy_http_downstream_rq_xx{envoy_response_code_class=\"5\"}[5m])) / clamp_min(sum(rate(envoy_http_downstream_rq_xx[5m])), 1)",
+              "legendFormat": "5xx fraction"
+            }
+          ]
+        }
+      ]
+    }

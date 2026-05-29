@@ -1,0 +1,39 @@
+# tempo-values.yaml — Helm values for Grafana Tempo, SINGLE-BINARY mode (lab-02).
+#
+# Install:
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm repo update
+#   helm install tempo grafana/tempo \
+#     --version 1.23.0 \                 # Tempo app 2.8.0; check artifacthub.io/packages/helm/grafana/tempo for latest
+#     --namespace monitoring \
+#     -f manifests/tempo-values.yaml
+#
+# Tempo is the TRACE backend: a TSDB-for-spans. It indexes by trace ID and stores spans
+# cheaply on object storage (here: local disk, fine for a lab). The single-binary chart
+# is the dev/test shape — one Pod, all roles. Production uses tempo-distributed.
+# Note: the grafana/tempo single-binary chart is migrating to the grafana-community repo
+# (post-2026). If `grafana/tempo` stops updating, switch to `grafana-community/tempo`
+# (single-binary) or `grafana/tempo-distributed` (production).
+#
+# GOTCHA the docs call out: in recent charts ALL ingest protocols are DISABLED by
+# default. You MUST enable the OTLP receiver explicitly or the Collector's exports are
+# silently dropped. Also note the default query port moved 3100 -> 3200.
+
+tempo:
+  # Turn ON the OTLP receivers so the Collector (and anything else) can push spans.
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+  storage:
+    trace:
+      backend: local                # filesystem store — lab only; use S3/GCS in prod
+      local:
+        path: /var/tempo/traces
+  resources:
+    requests:
+      cpu: "200m"
+      memory: 256Mi

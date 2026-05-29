@@ -54,6 +54,10 @@ kube-proxy — is the Phase 03 machinery, unchanged.
 4. Deploy a `SpinApp` and watch the operator compile it into a Deployment whose pods carry
    `runtimeClassName: wasmtime-spin-v2`; then shape vLLM traffic with it (lab-03).
 5. Reason about when Wasm beats a container (and when it doesn't).
+6. Deploy the same `.wasm` to **Akamai Functions** — managed Spin on Akamai Cloud — and
+   contrast self-managed (SpinKube) vs managed (lab-04).
+7. Build a serverless **RAG agent** function: in-memory retrieval + a provider-agnostic LLM
+   call (a hosted API *or* your own gateway) — the third operational model for an agent (lab-05).
 
 ## Labs
 
@@ -62,7 +66,8 @@ kube-proxy — is the Phase 03 machinery, unchanged.
 | 01 | `lab-01-spin-local.md` | the deployable is one `.wasm`, run by `wasmtime` — not an image with layers |
 | 02 | `lab-02-install-spinkube.md` | `RuntimeClass` (`handler: spin`) routes a pod through `containerd-shim-spin` to `wasmtime` instead of `runc` |
 | 03 | `lab-03-deploy-spinapp.md` | the operator turns one `SpinApp` into a Deployment whose pods carry `runtimeClassName`, then shapes vLLM traffic |
-| 04 | *optional, planned* | a deeper Spin function that pre/post-processes vLLM calls |
+| 04 | `lab-04-akamai-functions.md` | the same `.wasm` runs on **Akamai Functions** (managed Spin) — `spin aka deploy`; self-managed vs managed |
+| 05 | `lab-05-akamai-functions-rag.md` | a serverless **RAG agent** function — in-memory corpus + provider-agnostic LLM; the third agent home |
 
 ## The payoff
 

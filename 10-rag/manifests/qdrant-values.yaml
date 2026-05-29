@@ -1,0 +1,43 @@
+# qdrant-values.yaml — Helm values for the Qdrant vector database on kind.
+#
+# Install (see lab-01). Pin the chart; the chart's appVersion tracks the Qdrant server:
+#   # check github.com/qdrant/qdrant-helm/releases for the latest chart version
+#   helm repo add qdrant https://qdrant.github.io/qdrant-helm
+#   helm repo update
+#   helm install qdrant qdrant/qdrant --version 1.18.0 \
+#     --namespace vectordb --create-namespace -f manifests/qdrant-values.yaml
+#
+# Qdrant is the clean teaching choice: a single-purpose vector DB with an HTTP + gRPC API,
+# an HNSW (approximate-nearest-neighbor) index, and a one-command Helm chart. The valid
+# alternative is pgvector (the `vector` extension on Postgres) — same idea, bolted onto a
+# relational DB instead of a dedicated engine. Use pgvector when you already run Postgres
+# and want vectors next to your rows; use Qdrant when search is the point.
+#
+# kind has no real LoadBalancer, so keep the Service ClusterIP and reach it with
+# `kubectl port-forward` (lab-01). On LKE (Phase 09) you'd front this with a NodeBalancer
+# Service and back it with the Block Storage CSI for the PVC below — vectors are state,
+# and state on a real cluster wants durable storage.
+replicaCount: 1
+
+# Pin the server image too, so the chart can't drift under you on a re-pull.
+# (Chart 1.18.0 ships Qdrant v1.18.0; override here only to be explicit.)
+image:
+  tag: "v1.18.0"   # check hub.docker.com/r/qdrant/qdrant/tags for the latest
+
+# A small persistent volume so vectors survive a pod restart. kind's default
+# storageClass (standard / local-path) satisfies this; on LKE swap to linode-block-storage.
+persistence:
+  size: 1Gi
+
+# Modest requests so it co-exists with two vLLM pods on a laptop kind node.
+resources:
+  requests:
+    cpu: "100m"
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# Expose the REST (6333) and gRPC (6334) ports on a ClusterIP Service (the chart default).
+service:
+  type: ClusterIP

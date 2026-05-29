@@ -1,0 +1,50 @@
+# prometheusrule-slo.yaml — encode two SLOs as Prometheus rules (lab-03).
+#
+# A PrometheusRule is another Operator-watched CRD: the operator compiles `groups` into
+# Prometheus' rule files and reloads. `record:` rules precompute an expression into a new
+# series (cheap to graph/alert on); `alert:` rules fire when a condition holds for `for:`.
+#
+# An SLO is just a promise with a number attached. Here: p95 TTFT < 5s, and gateway error
+# rate < 1%. The rules turn those promises into queryable series and alerts.
+#
+# Apply: kubectl apply -f manifests/prometheusrule-slo.yaml
+# Verify: Prometheus UI > Status > Rules  (the group appears, rules evaluate green).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: llm-slo
+  namespace: default
+  labels:
+    app: vllm
+    # On stock kube-prometheus-stack the Prometheus rule selector matches this label;
+    # our values.yaml sets ruleSelectorNilUsesHelmValues=false so any namespace works.
+    release: monitoring
+spec:
+  groups:
+    - name: llm-slo.rules
+      rules:
+        # --- Recording rule: p95 time-to-first-token, precomputed for dashboards/alerts.
+        - record: llm:ttft_p95_seconds
+          expr: histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket[5m])))
+
+        # --- SLO 1: latency. Page if p95 TTFT stays above 5s for 5 minutes.
+        - alert: LLMLatencySLOBreached
+          expr: llm:ttft_p95_seconds > 5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "vLLM p95 time-to-first-token over 5s SLO"
+            description: "p95 TTFT = {{ $value }}s (SLO: < 5s) for 5m."
+
+        # --- SLO 2: error rate. Page if gateway 5xx exceeds 1% for 5 minutes.
+        - alert: LLMErrorSLOBreached
+          expr: |
+            sum(rate(envoy_http_downstream_rq_xx{envoy_response_code_class="5"}[5m]))
+              / clamp_min(sum(rate(envoy_http_downstream_rq_xx[5m])), 1) > 0.01
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Gateway 5xx rate over 1% SLO"
+            description: "5xx fraction = {{ $value }} (SLO: < 0.01) for 5m."

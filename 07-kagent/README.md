@@ -47,6 +47,8 @@ when it turned a binary-you-run into a Deployment-it-manages.
 4. Debug agents the only way you can — by reading **status conditions** and **logs**, not
    `print()`.
 5. (Bridge) Map concepts back to your local `agents/` framework.
+6. (Harness) Engineer the guides + sensors that make an agent reliable — `agent = model +
+   harness` — and see your gateway act as a *shared, deployed* harness (lab-05).
 
 ## Labs
 
@@ -55,7 +57,8 @@ when it turned a binary-you-run into a Deployment-it-manages.
 | 01 | `lab-01-install-kagent.md` — install the controller (Helm), tour the CRDs | controller reconciles an `Agent` CR into a runtime Pod; an agent with no model never becomes ready |
 | 02 | `lab-02-modelconfig-agent.md` — `ModelConfig` → vLLM, define an `Agent`, chat with it | two failure planes: reconcile (read conditions) vs runtime (read logs) |
 | 03 | `lab-03-agent-with-tools.md` — point the agent at the built-in `RemoteMCPServer`, watch it use a tool | the MCP indirection: model proposes → `toolNames` gates → server executes → result returns to the loop |
-| 04 | *(optional, planned)* bridge kagent to this repo's `agents/` framework — compare kagent vs Strands (when to use which). Not written yet. |
+| 04 | `lab-04-bridge-to-strands.md` — run this repo's `agents/` Strands framework on your in-cluster vLLM; choose process vs object | the two bridges: OpenAI `base_url` for the model, MCP for tools — the same standards on both sides |
+| 05 | `lab-05-agent-harness.md` — engineer the harness around the agent: guides + sensors, budgets, verification, the steering loop | `agent = model + harness`; the gateway (token limit + prompt guard) is a shared, deployed harness |
 
 ## How it fits the stack
 

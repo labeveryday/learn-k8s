@@ -1,0 +1,52 @@
+# otel-collector-values.yaml — Helm values for the OpenTelemetry Collector (lab-02).
+#
+# Install:
+#   helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+#   helm repo update
+#   helm install otel-collector open-telemetry/opentelemetry-collector \
+#     --version 0.157.2 \                # check artifacthub.io/packages/helm/opentelemetry-helm/opentelemetry-collector for latest
+#     --namespace monitoring \
+#     -f manifests/otel-collector-values.yaml
+#
+# The Collector is the funnel: every telemetry producer (your Strands agent) speaks OTLP
+# to ONE endpoint; the Collector receives, batches, and FANS OUT to backends. Swap Tempo
+# for Jaeger later and not a single agent changes — that decoupling is the whole point of
+# running a collector instead of exporting straight to a backend.
+
+mode: deployment            # one central collector; not a per-node agent for this lab
+image:
+  repository: otel/opentelemetry-collector-k8s   # the k8s distro the chart expects
+  tag: "0.152.0"                                  # pin to the chart's appVersion so the image can't drift to :latest
+
+# The chart's "preset" pipelines assume cluster-wide RBAC we don't need; define our own
+# minimal pipeline instead.
+presets:
+  kubernetesAttributes:
+    enabled: false
+
+config:
+  receivers:
+    # Accept OTLP over both gRPC (4317) and HTTP (4318). Strands defaults to OTLP/HTTP.
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+  processors:
+    batch: {}               # batch spans before export — fewer, larger writes
+  exporters:
+    # Forward traces to Tempo's OTLP ingest (gRPC 4317). Tempo Service name from the
+    # tempo chart install below.
+    otlp/tempo:
+      endpoint: tempo.monitoring.svc.cluster.local:4317
+      tls:
+        insecure: true      # in-cluster, no TLS for the lab
+    debug:
+      verbosity: basic      # also log a span summary so you can prove receipt in logs
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [batch]
+        exporters: [otlp/tempo, debug]

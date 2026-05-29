@@ -1,0 +1,52 @@
+# kps-values.yaml — Helm values for kube-prometheus-stack on a local kind cluster.
+#
+# Install (lab-01):
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm repo update
+#   helm install monitoring prometheus-community/kube-prometheus-stack \
+#     --version 86.0.1 \                  # check artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack for latest
+#     --namespace monitoring --create-namespace \
+#     -f manifests/kps-values.yaml
+#
+# This one chart installs the Prometheus Operator (+ its CRDs: ServiceMonitor,
+# PodMonitor, PrometheusRule), a Prometheus server, Alertmanager, Grafana, and the
+# node/kube-state exporters. On kind we trim it: kind is one box, not a fleet, so the
+# control-plane scrape jobs that target managed-cloud endpoints just error out.
+
+# --- Let Prometheus discover ServiceMonitors/PodMonitors in ANY namespace, not only
+#     those carrying the chart's release label. Our vLLM lives in `default`; without
+#     this the operator would ignore it. This is the single most common "my target
+#     never shows up" cause.
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    # kind has no real PVs by default; keep Prometheus' TSDB on emptyDir for the lab.
+    retention: 6h
+    resources:
+      requests:
+        cpu: "250m"
+        memory: 512Mi
+
+# --- Grafana: set a known admin password so the lab can log in deterministically.
+grafana:
+  adminPassword: "prom-operator"   # default for this chart; change in prod
+  defaultDashboardsEnabled: true
+  # Auto-load any dashboard we drop in as a ConfigMap labeled grafana_dashboard=1
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+
+# --- kind trims: these scrape targets don't exist on a kind control plane and would
+#     show up as permanently-down targets, muddying the lab-01 "target down" lesson.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false

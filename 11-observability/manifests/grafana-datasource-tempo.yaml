@@ -1,0 +1,29 @@
+# grafana-datasource-tempo.yaml — register Tempo as a Grafana datasource (lab-02).
+#
+# kube-prometheus-stack's Grafana ships a sidecar that watches for ConfigMaps labeled
+# `grafana_datasource: "1"` and hot-loads them as datasources — no Grafana restart, no
+# UI clicking. (The Prometheus datasource is pre-wired by the chart; we only add Tempo.)
+#
+# Apply: kubectl apply -f manifests/grafana-datasource-tempo.yaml
+# Verify: Grafana > Connections > Data sources > Tempo  (click "Test").
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-tempo
+  namespace: monitoring
+  labels:
+    grafana_datasource: "1"
+data:
+  tempo-datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Tempo
+        type: tempo
+        access: proxy
+        # Tempo's HTTP query API. Single-binary chart serves it on 3200 (NOT 3100).
+        url: http://tempo.monitoring.svc.cluster.local:3200
+        uid: tempo
+        jsonData:
+          # Let a trace's spans link to the Prometheus metrics around them.
+          tracesToMetrics:
+            datasourceUid: prometheus

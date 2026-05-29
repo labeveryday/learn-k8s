@@ -1,0 +1,51 @@
+# rag-agent.yaml — a kagent Agent that calls RETRIEVAL as a tool (agentic RAG).
+#
+# This is lab-03's payload and the tie to Phase 07 lab-03: same RemoteMCPServer + toolNames
+# allow-list idiom, but the tool is now `retrieve` from YOUR retrieval-mcp server, not the
+# built-in Kubernetes tools. The difference from lab-02's fixed pipeline: here the AGENT
+# decides whether to call `retrieve` at all. Ask it a general question and a good model
+# answers directly; ask it something runbook-specific and it should reach for the tool.
+#
+# Prereq: Phase 07 (kagent installed; ModelConfig `vllm` in the kagent namespace, pointing
+# at the chat vLLM — see 07-kagent/manifests/modelconfig-vllm.yaml). Point that ModelConfig
+# at your Phase 06 GATEWAY instead of vLLM directly to make the generation call inherit the
+# rag-route token budget — agentic RAG governed by your platform.
+---
+# Register YOUR retrieval MCP server as a tool catalog kagent can discover.
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: retrieval
+  namespace: kagent
+spec:
+  description: "Retrieval over the Acme Cloud runbook vector store (embed + Qdrant search)."
+  # The retrieval-mcp Service lives in the default namespace; cross-namespace DNS name.
+  url: "http://retrieval-mcp.default.svc.cluster.local:9000/mcp"
+  protocol: STREAMABLE_HTTP
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: rag-agent
+  namespace: kagent
+spec:
+  description: "Answers questions about Acme Cloud, retrieving from the runbook when needed."
+  type: Declarative
+  declarative:
+    modelConfig: vllm
+    systemMessage: |
+      You answer questions about Acme Cloud. You have a `retrieve` tool that searches the
+      Acme Cloud runbook. Use it whenever the question is about Acme-specific facts
+      (region codes, limits, quirks). If retrieved chunks do not contain the answer, say
+      you don't know rather than guessing. For general knowledge, answer directly without
+      retrieving.
+    tools:
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: retrieval
+          # Allow-list exactly the one tool this agent may call. Confirm the discovered
+          # name with: kubectl describe remotemcpserver retrieval -n kagent
+          toolNames:
+            - retrieve

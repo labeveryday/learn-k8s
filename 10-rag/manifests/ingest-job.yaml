@@ -1,0 +1,47 @@
+# ingest-job.yaml — run the ingest once. A Job (not a Deployment): it runs to completion
+# and stops. Re-run with `kubectl delete job rag-ingest && kubectl apply -f ...`.
+#
+# It mounts the corpus + script from the ConfigMap and talks to two in-cluster Services by
+# DNS: the embedding vLLM (default ns) and Qdrant (vectordb ns). Stdlib-only script means a
+# plain python image with no pip step.
+#   # check hub.docker.com/_/python for the latest 3.x slim tag
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rag-ingest
+  namespace: default
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ingest
+          image: python:3.12-slim
+          command: ["python", "/script/ingest.py"]
+          env:
+            - name: EMBED_URL
+              value: "http://vllm-embed.default.svc.cluster.local:8000/v1/embeddings"
+            - name: EMBED_MODEL
+              value: "BAAI/bge-small-en-v1.5"
+            - name: QDRANT_URL
+              value: "http://qdrant.vectordb.svc.cluster.local:6333"
+            - name: COLLECTION
+              value: "runbook"
+            - name: DIM
+              value: "384"             # MUST match the embedding model output + the collection
+          volumeMounts:
+            - { name: corpus, mountPath: /corpus }
+            - { name: script, mountPath: /script }
+      volumes:
+        - name: corpus
+          configMap:
+            name: rag-ingest
+            items:
+              - { key: corpus.md, path: corpus.md }
+        - name: script
+          configMap:
+            name: rag-ingest
+            items:
+              - { key: ingest.py, path: ingest.py }

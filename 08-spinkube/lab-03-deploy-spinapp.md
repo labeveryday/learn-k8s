@@ -187,7 +187,7 @@ You can now:
       failure (silent, inside `wasmtime`).
 - [ ] Place the shim in the platform: gateway → Wasm shim → vLLM.
 
-## What you proved in Phase 08
+## What you proved so far
 
 You built a Wasm module (lab-01), taught a cluster to schedule it via a `RuntimeClass` +
 shim + operator (lab-02), ran it as a `SpinApp` that the operator compiled into a routed
@@ -197,6 +197,7 @@ between "Kubernetes can see it" and "the sandbox swallowed it."
 
 ## Next
 
-→ **Phase 09**: take everything — gateway, AI gateway, vLLM, kagent, Spin — to a real
-Akamai LKE cluster with NodeBalancers, Block Storage, and GPUs. The lab-02 shim that was
-baked into a k3d image becomes a node-pool capability you provision yourself.
+→ `lab-04-akamai-functions.md`: you just ran this `.wasm` *yourself* on SpinKube — now let
+**Akamai run the same module for you**, serverless, with one `spin aka deploy`. Then lab-05
+turns a function into a RAG agent. (Phase 09 takes the self-managed half — SpinKube, your
+gateway, vLLM — onto real Akamai LKE.)

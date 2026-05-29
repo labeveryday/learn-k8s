@@ -1,0 +1,152 @@
+# retrieval-mcp-server.yaml — expose RETRIEVAL as an MCP tool, in-cluster.
+#
+# lab-03's whole point: retrieval stops being a hardcoded pipeline step and becomes a TOOL
+# an agent DECIDES to call. To do that for a kagent Agent, retrieval must speak MCP. This
+# Deployment runs a tiny MCP server (stdlib HTTP, streamable-HTTP transport) exposing one
+# tool: `retrieve(query, top_k)`. The tool does the SAME embed -> top-k search you ran by
+# hand in lab-02 — embed the query via vLLM, search Qdrant, return the chunk texts.
+#
+# The server code lives in the ConfigMap below so the lab stays one `kubectl apply`. In a
+# real build you'd bake this into an image; the ConfigMap keeps it readable and editable.
+#
+# NOTE ON MCP TRANSPORT: kagent's RemoteMCPServer talks STREAMABLE_HTTP (or SSE). The server
+# below is a TEACHING STUB: it hand-rolls the MCP *message shape* (initialize / tools/list /
+# tools/call) over plain JSON POST so you can read exactly what an MCP server answers. It is
+# NOT a spec-complete streamable-HTTP transport (no SSE event framing, no Mcp-Session-Id
+# headers), so a strict kagent build may not complete tool discovery against it. For a server
+# kagent discovers reliably, bake a real one into an image using the `mcp` SDK's FastMCP:
+#     from mcp.server.fastmcp import FastMCP
+#     mcp = FastMCP("retrieval")
+#     @mcp.tool()
+#     def retrieve(query: str, top_k: int = 3) -> str: ...
+#     mcp.run(transport="streamable-http")
+# Either way, if discovery fails, read the RemoteMCPServer conditions (the lab's "Break it"
+# shows where) — don't guess.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: retrieval-mcp-src
+  namespace: default
+data:
+  server.py: |
+    """Teaching stub: an MCP server exposing one tool, retrieve(query, top_k), with NO deps.
+    It hand-rolls the MCP JSON-RPC messages (initialize / tools/list / tools/call) over plain
+    HTTP so the shape is readable. It is NOT a full streamable-HTTP transport (see the header
+    note; use the `mcp` SDK's FastMCP for a production server kagent discovers reliably).
+    The retrieval logic is the lab-02 pipeline: embed the query, search Qdrant, return text.
+    """
+    import json, os, urllib.request
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    EMBED_URL = os.environ["EMBED_URL"]
+    EMBED_MODEL = os.environ["EMBED_MODEL"]
+    QDRANT_URL = os.environ["QDRANT_URL"]
+    COLLECTION = os.environ.get("COLLECTION", "runbook")
+
+    def _http(method, url, body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as r:
+            return json.loads(r.read() or "{}")
+
+    def retrieve(query, top_k=3):
+        """Embed the query, search Qdrant, return the top_k chunk texts."""
+        vec = _http("POST", EMBED_URL, {"input": query, "model": EMBED_MODEL})["data"][0]["embedding"]
+        hits = _http("POST", f"{QDRANT_URL}/collections/{COLLECTION}/points/search",
+                     {"vector": vec, "limit": top_k, "with_payload": True})["result"]
+        return [h["payload"]["text"] for h in hits]
+
+    TOOLS = [{
+        "name": "retrieve",
+        "description": "Search the Acme Cloud runbook for chunks relevant to a query.",
+        "inputSchema": {"type": "object",
+                        "properties": {"query": {"type": "string"},
+                                       "top_k": {"type": "integer", "default": 3}},
+                        "required": ["query"]},
+    }]
+
+    class H(BaseHTTPRequestHandler):
+        def _send(self, obj):
+            b = json.dumps(obj).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0))
+            msg = json.loads(self.rfile.read(n) or "{}")
+            mid, method = msg.get("id"), msg.get("method")
+            if method == "initialize":
+                self._send({"jsonrpc": "2.0", "id": mid, "result": {
+                    "protocolVersion": "2024-11-05",
+                    "serverInfo": {"name": "retrieval", "version": "0.1.0"},
+                    "capabilities": {"tools": {}}}})
+            elif method == "tools/list":
+                self._send({"jsonrpc": "2.0", "id": mid, "result": {"tools": TOOLS}})
+            elif method == "tools/call":
+                args = msg["params"]["arguments"]
+                texts = retrieve(args["query"], int(args.get("top_k", 3)))
+                self._send({"jsonrpc": "2.0", "id": mid, "result": {
+                    "content": [{"type": "text", "text": "\n\n---\n\n".join(texts)}]}})
+            else:
+                self._send({"jsonrpc": "2.0", "id": mid, "result": {}})
+        def log_message(self, *a):  # quiet
+            pass
+
+    ThreadingHTTPServer(("0.0.0.0", 9000), H).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retrieval-mcp
+  namespace: default
+  labels:
+    app: retrieval-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: retrieval-mcp
+  template:
+    metadata:
+      labels:
+        app: retrieval-mcp
+    spec:
+      containers:
+        - name: mcp
+          image: python:3.12-slim       # check hub.docker.com/_/python for latest 3.x slim
+          command: ["python", "/src/server.py"]
+          env:
+            - name: EMBED_URL
+              value: "http://vllm-embed.default.svc.cluster.local:8000/v1/embeddings"
+            - name: EMBED_MODEL
+              value: "BAAI/bge-small-en-v1.5"
+            - name: QDRANT_URL
+              value: "http://qdrant.vectordb.svc.cluster.local:6333"
+            - name: COLLECTION
+              value: "runbook"
+          ports:
+            - containerPort: 9000
+          volumeMounts:
+            - { name: src, mountPath: /src }
+      volumes:
+        - name: src
+          configMap:
+            name: retrieval-mcp-src
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: retrieval-mcp
+  namespace: default
+  labels:
+    app: retrieval-mcp
+spec:
+  selector:
+    app: retrieval-mcp
+  ports:
+    - name: mcp
+      port: 9000
+      targetPort: 9000

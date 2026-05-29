@@ -1,0 +1,42 @@
+# load-generator.yaml — a throwaway Job that hammers vLLM so the metrics MOVE (lab-01).
+#
+# Observability is invisible on an idle system. This Job fires a burst of concurrent
+# chat completions at the in-cluster vLLM Service so you can WATCH the golden signals
+# react: vllm:num_requests_waiting climbs (queue), TTFT p95 rises, generation tok/s
+# spikes. That "watch the line move" moment is the lab-01 payoff.
+#
+# Point it at the gateway instead of vLLM directly to also light up the Envoy metrics:
+#   change BASE to the gateway and add the Host header your route keys on (06-ai-gateway).
+#
+# Run:    kubectl apply -f manifests/load-generator.yaml
+# Watch:  in Prometheus, graph  vllm:num_requests_waiting  while this runs.
+# Clean:  kubectl delete -f manifests/load-generator.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llm-load
+  namespace: default
+spec:
+  completions: 1
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: load
+          image: curlimages/curl:8.11.1   # check hub.docker.com/r/curlimages/curl for latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              BASE="http://vllm.default.svc.cluster.local:8000/v1/chat/completions"
+              echo "firing 60 requests, 10 at a time, at $BASE"
+              for round in $(seq 1 6); do
+                for i in $(seq 1 10); do
+                  curl -s -o /dev/null "$BASE" \
+                    -H 'Content-Type: application/json' \
+                    -d '{"model":"Qwen/Qwen2.5-0.5B-Instruct","messages":[{"role":"user","content":"Explain Kubernetes Services in three sentences."}],"max_tokens":128}' &
+                done
+                wait
+                echo "round $round done"
+              done
+              echo "load complete"

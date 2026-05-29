@@ -1,0 +1,79 @@
+# ingest-configmap.yaml — the tiny corpus + the ingest script, mounted into the ingest Job.
+#
+# Two files in one ConfigMap:
+#   corpus.md  — the "your data" the LLM was never trained on (deliberately niche so you can
+#                prove retrieval is doing the work, not the model's memory).
+#   ingest.py  — chunk -> embed (vLLM /v1/embeddings) -> upsert (Qdrant) -> create payload.
+#
+# The script uses only the Python stdlib (urllib + json), so the Job can run on a plain
+# python:3.12-slim image with no pip install — keeps the lab fast and offline-friendly.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rag-ingest
+  namespace: default
+data:
+  corpus.md: |
+    # Acme Cloud internal runbook (fictional — NOT in any model's training data)
+
+    ## Region codes
+    Acme Cloud regions use a 5-character code: a 2-letter continent, a hyphen, and a
+    2-digit ordinal. The Osaka region is `as-07`. The Reykjavik region is `eu-13`.
+    The Santiago region is `sa-02`.
+
+    ## NodeBalancer quirk
+    The Acme NodeBalancer health check defaults to TCP on port 80. If your pods serve
+    HTTPS only, the balancer marks them DOWN even when healthy. Fix: set the check
+    protocol to `http` and the path to `/healthz` in the NodeBalancer config annotation
+    `acme.cloud/nb-check-path`.
+
+    ## Block storage limit
+    A single Acme block volume caps at 10 TiB. To exceed that, stripe volumes with LVM;
+    Acme support will not raise the per-volume limit under any circumstance.
+
+    ## GPU node pool gotcha
+    Acme GPU nodes taint themselves `acme.cloud/gpu=present:NoSchedule` on boot. Your GPU
+    workload pods must tolerate that taint or they stay Pending forever with no events.
+
+  ingest.py: |
+    """Ingest the corpus into Qdrant: chunk -> embed -> upsert. Stdlib only."""
+    import json, os, urllib.request, re
+
+    EMBED_URL = os.environ["EMBED_URL"]      # http://vllm-embed.default.svc.cluster.local:8000/v1/embeddings
+    EMBED_MODEL = os.environ["EMBED_MODEL"]  # BAAI/bge-small-en-v1.5
+    QDRANT_URL = os.environ["QDRANT_URL"]    # http://qdrant.vectordb.svc.cluster.local:6333
+    COLLECTION = os.environ.get("COLLECTION", "runbook")
+    DIM = int(os.environ.get("DIM", "384"))  # MUST match the embedding model's output size
+
+    def http(method, url, body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as r:
+            return json.loads(r.read() or "{}")
+
+    def embed(text):
+        # vLLM speaks the OpenAI /v1/embeddings contract: {input, model} -> {data:[{embedding:[...]}]}
+        out = http("POST", EMBED_URL, {"input": text, "model": EMBED_MODEL})
+        return out["data"][0]["embedding"]
+
+    # 1. CHUNK: split the corpus on markdown headings. Each "## section" is one chunk.
+    #    Chunking is the whole game in lab-02 — a chunk is the unit you retrieve and stuff
+    #    into the prompt, so it must be small enough to fit several into the context window.
+    raw = open("/corpus/corpus.md").read()
+    chunks = [c.strip() for c in re.split(r"(?=^## )", raw, flags=re.M) if c.strip()]
+    print(f"chunked into {len(chunks)} pieces")
+
+    # 2. CREATE the collection with the matching vector size + cosine distance.
+    #    PUT is idempotent in Qdrant; re-running the Job just recreates it.
+    http("PUT", f"{QDRANT_URL}/collections/{COLLECTION}",
+         {"vectors": {"size": DIM, "distance": "Cosine"}})
+
+    # 3. EMBED each chunk and UPSERT the vector + its source text as payload.
+    points = []
+    for i, chunk in enumerate(chunks):
+        vec = embed(chunk)
+        assert len(vec) == DIM, f"embedding dim {len(vec)} != collection dim {DIM}"
+        points.append({"id": i, "vector": vec, "payload": {"text": chunk}})
+    http("PUT", f"{QDRANT_URL}/collections/{COLLECTION}/points?wait=true", {"points": points})
+    print(f"upserted {len(points)} vectors of dim {DIM} into '{COLLECTION}'")

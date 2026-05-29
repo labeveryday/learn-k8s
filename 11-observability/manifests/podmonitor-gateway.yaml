@@ -1,0 +1,35 @@
+# podmonitor-gateway.yaml — scrape the kgateway data-plane proxy (Envoy/agentgateway).
+#
+# Why a PodMonitor and not a ServiceMonitor here: the proxy's Prometheus stats live on
+# the ADMIN/stats port 19000 at /stats/prometheus, which is NOT in the routable
+# Gateway Service (that Service only fronts :80/:443 traffic). A PodMonitor scrapes the
+# Pod directly, so it can reach a port the Service doesn't publish.
+#
+# The proxy is the kgateway-provisioned data plane for the Gateway named `http` in
+# namespace kgateway-system (05-gateway-api / 06-ai-gateway). kgateway labels that Pod;
+# confirm the label on YOUR install before trusting the selector:
+#   kubectl -n kgateway-system get pods --show-labels | grep -i http
+# Common labels: gateway.networking.k8s.io/gateway-name=http  OR  app.kubernetes.io/name=http
+# Adjust matchLabels below to whatever your proxy Pod actually carries.
+#
+# Apply: kubectl apply -f manifests/podmonitor-gateway.yaml
+# Verify: Prometheus UI > Status > Targets > podMonitor/kgateway-system/gateway-proxy
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: gateway-proxy
+  namespace: kgateway-system
+  labels:
+    app: kgateway
+spec:
+  selector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: http
+  namespaceSelector:
+    matchNames:
+      - kgateway-system
+  podMetricsEndpoints:
+    # Envoy/agentgateway expose Prometheus stats on the admin port 19000.
+    - targetPort: 19000
+      path: /stats/prometheus
+      interval: 15s

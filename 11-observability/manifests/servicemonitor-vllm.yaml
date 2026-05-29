@@ -1,0 +1,37 @@
+# servicemonitor-vllm.yaml — tell the Prometheus Operator to scrape vLLM's native
+# /metrics endpoint.
+#
+# A ServiceMonitor is NOT scrape config you hand to Prometheus. It's a CRD the
+# Prometheus Operator WATCHES; when it sees one, it compiles a new scrape job into
+# Prometheus' config and reloads it. You declare "scrape Services matching THIS
+# selector, on THIS port, at THIS path" and the operator does the wiring.
+#
+# vLLM exposes Prometheus metrics on the SAME port as its OpenAI API (8000) at /metrics
+# — series are prefixed `vllm:` (e.g. vllm:num_requests_running,
+# vllm:time_to_first_token_seconds, vllm:prompt_tokens_total). No exporter sidecar
+# needed; vLLM is its own exporter.
+#
+# Apply: kubectl apply -f manifests/servicemonitor-vllm.yaml
+# Verify the operator picked it up: Prometheus UI > Status > Targets, look for
+#   serviceMonitor/default/vllm  (state UP).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vllm
+  namespace: default
+  labels:
+    app: vllm
+spec:
+  # WHICH Services to scrape: must match the vllm Service labels (06-ai-gateway).
+  selector:
+    matchLabels:
+      app: vllm
+  namespaceSelector:
+    matchNames:
+      - default
+  endpoints:
+    # `port` is the Service PORT NAME (not a number). The vllm Service names its
+    # port "http" (see 06-ai-gateway/manifests/vllm-deploy.yaml).
+    - port: http
+      path: /metrics
+      interval: 15s

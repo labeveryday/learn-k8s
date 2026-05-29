@@ -1,0 +1,79 @@
+# embed-vllm.yaml — a SECOND vLLM, serving a small EMBEDDING model on CPU.
+#
+# This is the same vllm/vllm-openai-cpu image as the chat server in Phase 06
+# (06-ai-gateway/manifests/vllm-deploy.yaml) — only the model and the --runner flag
+# change. The chat server serves /v1/chat/completions; this server serves
+# /v1/embeddings. Two jobs, one server family.
+#
+# THE FLAG: an embedding model must run in "pooling" mode, not generative mode, because
+# you want the hidden-state vector for the input, not next-token text. Current vLLM spells
+# this `--runner pooling`. Older docs/versions used `--task embed`; vLLM still accepts the
+# task form, but pin to --runner pooling. Some architectures (e.g. Qwen) can do BOTH chat
+# and embedding, so you MUST be explicit or vLLM guesses wrong.
+#   # check docs.vllm.ai/en/latest/models/pooling_models/embed/ for the current flag
+#
+# MODEL: BAAI/bge-small-en-v1.5 — 384-dim, ~33M params, English, CPU-friendly. vLLM's docs
+# list bge / e5-small as supported pooling models. intfloat/e5-small-v2 is a drop-in
+# alternative (also 384-dim). Keep the dimension in mind: the vector DB collection in
+# qdrant-values.yaml MUST be created with the SAME size (384), or upserts fail.
+#   # check huggingface.co/BAAI/bge-small-en-v1.5 for the model card / dim
+#
+# arm64 (Apple Silicon kind nodes): swap the tag for vllm/vllm-openai-cpu:latest-aarch64.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-embed
+  namespace: default
+  labels:
+    app: vllm-embed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-embed
+  template:
+    metadata:
+      labels:
+        app: vllm-embed
+    spec:
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai-cpu:latest-x86_64
+          args:
+            - "--model"
+            - "BAAI/bge-small-en-v1.5"
+            - "--runner"
+            - "pooling"            # serve embeddings, not chat (older form: --task embed)
+            - "--dtype"
+            - "float32"            # CPU has no bf16/fp16 path
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 60   # CPU model load + HF download is slow (but small model = faster than chat)
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-embed
+  namespace: default
+  labels:
+    app: vllm-embed
+spec:
+  selector:
+    app: vllm-embed
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000

@@ -1,0 +1,53 @@
+# rag-route.yaml — a dedicated gateway route for RAG generation traffic.
+#
+# RAG's GENERATION step is just a /v1/chat/completions call to the chat vLLM (Qwen) — so it
+# can ride the SAME agentgateway path you built in Phase 06. This route reuses the
+# Phase 06 AgentgatewayBackend `vllm-ai` (no new backend needed; same Qwen model) but gives
+# RAG its OWN hostname, `rag.example.com`. Why a separate route? So RAG traffic is
+# separately observable and separately governable: attach a token limit / prompt guard to
+# THIS route and only RAG inherits it, while bare chat callers on llm.example.com are
+# untouched. Same backend, distinct policy surface.
+#
+# Prereq: Phase 06 lab-02 applied kgateway-ai-backend.yaml (the `vllm-ai` backend) and the
+# `http` Gateway in kgateway-system exists. If you skipped Phase 06, apply that backend
+# first: kubectl apply -f ../06-ai-gateway/manifests/kgateway-ai-backend.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rag
+  namespace: default
+spec:
+  parentRefs:
+    - name: http
+      namespace: kgateway-system
+  hostnames:
+    - "rag.example.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: vllm-ai
+---
+# rag-token-budget — meter RAG generation by TOKENS, on the rag route only.
+# RAG prompts are large (you stuff retrieved chunks in), so a token budget is more honest
+# here than a request count. Same AgentgatewayPolicy idiom as Phase 06 lab-02.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: rag-token-budget
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: rag
+  traffic:
+    rateLimit:
+      local:
+        # RAG prompts carry retrieved context, so they cost more tokens than bare chat.
+        - tokens: 2000
+          unit: Minutes

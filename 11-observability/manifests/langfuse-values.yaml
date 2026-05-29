@@ -1,0 +1,79 @@
+# langfuse-values.yaml — Helm values for self-hosting Langfuse v3 on LKE (lab-04).
+#
+# Install:
+#   helm repo add langfuse https://langfuse.github.io/langfuse-k8s && helm repo update
+#   helm install langfuse langfuse/langfuse -n langfuse --create-namespace \
+#     --version 1.5.32 \                 # Langfuse app v3.175.0; check artifacthub.io/packages/helm/langfuse-k8s/langfuse for latest
+#     -f manifests/langfuse-values.yaml
+#
+# This chart deploys the Langfuse WEB + WORKER app tiers plus four bundled Bitnami
+# subcharts: postgresql, clickhouse, valkey (redis), and minio (S3). Below we keep
+# Postgres/ClickHouse/Redis bundled (single-node, trimmed for a learning cluster, with
+# their data on Akamai Block Storage), but DISABLE the bundled MinIO and point the blob
+# store at Linode Object Storage instead — so this one app exercises BOTH Akamai storage
+# primitives: Block Storage (CSI PVCs) for the DBs, Object Storage (S3) for blobs.
+#
+# Treat secrets here as PLACEHOLDERS — generate real ones (lab-04 step 1) and prefer
+# sourcing them from a Secret in production rather than inline values.
+# Field names follow the chart's values.yaml at the version above; if an install errors on
+# an unknown key, diff against the chart's values.yaml (subchart keys move between versions).
+
+langfuse:
+  # openssl rand -base64 32 / -base64 32 / -hex 32 (encryptionKey MUST be 64 hex chars)
+  salt:
+    value: "REPLACE_WITH_openssl_rand_base64_32"
+  nextauth:
+    secret:
+      value: "REPLACE_WITH_openssl_rand_base64_32"
+  encryptionKey:
+    value: "REPLACE_WITH_openssl_rand_hex_32"   # 64 hex characters
+  # web/worker are light; the DBs are the heavy part.
+  web:
+    replicas: 1
+  worker:
+    replicas: 1
+
+# --- Bundled datastores: keep, but single-node + on Akamai Block Storage -------------
+postgresql:
+  deploy: true
+  auth:
+    password: "REPLACE_pg_password"
+  primary:
+    persistence:
+      enabled: true
+      storageClass: linode-block-storage   # Phase 09 CSI; real Block Storage on LKE
+      size: 10Gi
+
+clickhouse:
+  deploy: true
+  auth:
+    password: "REPLACE_ch_password"
+  # The chart's default ClickHouse is HA (replicaCount: 3, clusterEnabled: true,
+  # resourcesPreset: 2xlarge) and will NOT schedule on a small learning node pool.
+  # Single-node levers (per the langfuse-k8s 1.5.32 chart values):
+  replicaCount: 1
+  clusterEnabled: false     # the real HA lever: replicaCount 1 + clusterEnabled false = one non-HA node
+  resourcesPreset: small    # default 2xlarge won't fit a learning pool
+  persistence:              # Bitnami subchart passthrough — if the PVC won't Bind, `helm get values` and check the subchart's persistence key path
+    enabled: true
+    storageClass: linode-block-storage
+    size: 20Gi            # ClickHouse is disk-heavy even for a lab
+
+redis:                     # bundled Valkey (Redis-compatible)
+  deploy: true
+  auth:
+    password: "REPLACE_redis_password"
+
+# --- Blob store: DISABLE bundled MinIO, use Linode Object Storage (S3-compatible) -----
+s3:
+  deploy: false            # do not run MinIO; point at external Object Storage instead
+  bucket: "langfuse-events"                       # create this bucket in Object Storage first
+  region: "us-ord-1"                              # your Linode Object Storage region
+  endpoint: "https://us-ord-1.linodeobjects.com"  # the regional S3 endpoint
+  forcePathStyle: true     # Linode Object Storage is S3-compatible; confirm path-style at your endpoint
+  # credentials are OBJECTS with a .value subkey — NOT plain strings. (Use .secretKeyRef.name/.key
+  # instead to source them from a Kubernetes Secret in production.)
+  accessKeyId:
+    value: "REPLACE_linode_obj_access_key"
+  secretAccessKey:
+    value: "REPLACE_linode_obj_secret_key"

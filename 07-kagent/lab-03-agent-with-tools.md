@@ -212,7 +212,7 @@ You can now:
 - [ ] Trace an MCP tool call from the LLM loop through kagent to the server and back.
 - [ ] Explain why tool access as a CRD field is enforceable policy, not a convention.
 
-## What you proved in Phase 07
+## What you proved so far
 
 You ran an agent with **no Python process**: a `ModelConfig` pointed at your own vLLM
 (Phase 06), an `Agent` object the controller keeps alive (the process→object shift from
@@ -221,5 +221,6 @@ workload. That's "agents in production," riding the same Phase 03 machinery unde
 
 ## Next
 
-→ **Phase 08**: a different workload type entirely — WebAssembly with Spin — for the
-lightweight glue around all of this.
+→ `lab-04-bridge-to-strands.md`: now connect this k8s-native path back to *your own*
+`agents/` Strands framework — run it on the same vLLM, and learn when an agent should be a
+process vs a kagent object. That bridge closes the phase before Phase 08 (WebAssembly).
