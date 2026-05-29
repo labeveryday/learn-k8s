@@ -1,5 +1,7 @@
 # Learn Linux → Docker → Kubernetes → vLLM
 
+**📖 Read it online: <https://labeveryday.github.io/learn-k8s/>**
+
 A fast-track, offline-first curriculum designed by a panel:
 - **Stanford (distributed systems lens)** — *why* each layer exists, what problem it solves.
 - **MIT (systems lens)** — the kernel/protocol primitives beneath each tool. No magic.
