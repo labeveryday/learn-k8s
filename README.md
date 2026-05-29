@@ -13,13 +13,15 @@ The **core curriculum (Phases 00–04)** gets you to a confident operator. After
 3. Run a local Kubernetes cluster, deploy apps with raw manifests, and debug them with `kubectl`.
 4. Deploy an LLM inference workload (vLLM, CPU-mode on Mac) behind a K8s Service, with probes, limits, and basic autoscaling.
 
-The **optional Platform Track (Phases 05–09)** adds the layer above the workload — the
+The **optional Platform Track (Phases 05–11)** adds the layer above the workload — the
 platform other people call. After it you can also:
 5. Route traffic with the **Gateway API** standard (kgateway, Kong) instead of legacy Ingress.
 6. Put vLLM behind an **AI gateway** with token rate limits, multi-model routing, and prompt guards.
 7. Run **AI agents as Kubernetes resources** (kagent) that call your own vLLM and MCP tools.
-8. Build and run **WebAssembly** workloads on k8s with Spin / SpinKube.
+8. Build **WebAssembly** workloads on k8s with Spin / SpinKube — and ship the same module serverless on **Akamai Functions**.
 9. Take the whole stack to **Akamai LKE** — NodeBalancer, Block Storage CSI, and GPU node pools.
+10. Build **RAG** over your own data (embeddings + a vector store) as a workload on the platform.
+11. **Observe** it end to end — metrics, traces, and an eval-based quality score (Prometheus/Grafana + Langfuse).
 
 ## Pacing
 

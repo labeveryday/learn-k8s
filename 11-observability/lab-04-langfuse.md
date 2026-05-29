@@ -317,7 +317,7 @@ You can now:
 - [ ] Read token cost + an LLM-as-judge score on a real trace, and version a prompt.
 - [ ] Say precisely which observability question each pane answers — and which it can't.
 
-## Tie back / forward
+## Tie back
 
 This closes the observability picture: lab-01 (metrics) + lab-02 (traces) + lab-03 (a
 hand-built quality signal) taught the **vendor-neutral mechanism**; Langfuse is the
@@ -325,6 +325,13 @@ hand-built quality signal) taught the **vendor-neutral mechanism**; Langfuse is 
 steering loop** — a recurring low score is the cue to change a guide or sensor, not to retry.
 On real infra, your Block Storage backs Langfuse's analytics and Object Storage holds its
 events — the same Phase 09 primitives, now serving your *observability* plane.
+
+## You are done
+
+There is no next lab. You've built and can now operate a self-hosted AI platform on Akamai
+end to end — Linux → Docker → K8s → vLLM → gateway → AI gateway → agents → Wasm → LKE → RAG →
+observability. The real test isn't reading this: it's standing the whole thing up on a cluster
+and keeping it running. Go do that.
 
 ## Sources
 

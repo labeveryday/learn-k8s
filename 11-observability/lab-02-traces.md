@@ -348,10 +348,13 @@ You can now:
 - [ ] Read an agent request's Agent→Cycle→LLM/Tool span tree and name the slow hop.
 - [ ] Diagnose a blind spot caused by a broken exporter (not a broken request).
 
-## Tie back / forward
+## Tie back
 
 The span context rides the same Phase 03 HTTP path your requests already use — OTLP is just
 more traffic DNAT'd by kube-proxy to the Collector's ClusterIP. You can now answer "is it
-up?" (lab-01) and "why is it slow?" (this lab). The last question — "**is it any good?**" —
-is next: → `lab-03-quality-cost.md` adds a quality score (Strands Evals, LLM-as-judge) and a
-token/cost panel, then ties all three signals to the harness steering loop.
+up?" (lab-01) and "why is it slow?" (this lab); the last question — "**is it any good?**" —
+is what the next lab adds.
+
+## Next
+
+→ `lab-03-quality-cost.md`: up and fast still is not *good* or *cheap* — add token-cost accounting and an LLM-as-judge quality score, then hold the platform to SLOs.

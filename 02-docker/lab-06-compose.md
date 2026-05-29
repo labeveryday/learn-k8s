@@ -296,3 +296,7 @@ If you can write Compose, K8s YAML is mostly verbose Compose with stricter typin
 parallel: both are *declarative reconcilers*. `docker compose up` and `kubectl apply -f` each take a
 file of desired state and make reality match it — the one idea from the top of this lab, and the
 spine of the rest of the curriculum.
+
+## Next
+
+→ **Phase 03** (`03-kubernetes/`): Compose orchestrates containers on ONE host; Kubernetes does it across many — same idea (declare desired state, a controller reconciles), bigger blast radius.

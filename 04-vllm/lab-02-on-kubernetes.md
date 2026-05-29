@@ -387,3 +387,7 @@ The "AI-ness" of the workload is irrelevant to K8s. It's just another HTTP serve
    c = OpenAI(base_url="http://ollama.llm.svc.cluster.local:11434/v1", api_key="none")
    print(c.chat.completions.create(model="<your-model>", messages=[{"role":"user","content":"hi"}]))
    ```
+
+## Next
+
+→ `lab-03-probes-and-autoscale.md`: a running vLLM Pod is not a reliable service yet — add readiness/liveness probes and an HPA so it joins traffic only when ready and scales under load.

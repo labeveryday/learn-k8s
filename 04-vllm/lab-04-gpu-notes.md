@@ -166,3 +166,7 @@ section 6.
 When you have access to a GPU cluster, redeploying the manifests from Lab 02 with `nvidia.com/gpu`
 limits and a bigger model is a one-day exercise. The K8s skills you built in Phase 3 are the hard
 part; the GPU bits are just a few extra fields.
+
+## Next
+
+→ **the Platform Track** (optional second half): you can serve a model behind a Service — now build the *platform* around it. Read `PLATFORM-TRACK.md` first, then start `05-gateway-api/`.

@@ -1,0 +1,11 @@
+# Docs site (MkDocs Material). Use a venv — Debian/Ubuntu's system pip is PEP 668-locked:
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements-docs.txt
+#   .venv/bin/mkdocs serve   → http://127.0.0.1:8000   (live preview)
+#   .venv/bin/mkdocs build   → ./site/                 (static build)
+#
+# Pinned BELOW mkdocs 2.0 deliberately: upstream announced a backward-incompatible v2 that
+# drops the plugin/theme system, so an unpinned `pip install mkdocs` could break this build.
+# Staying on the stable 1.x line keeps it reproducible.
+mkdocs>=1.6,<2
+mkdocs-material>=9.5,<10
+mkdocs-same-dir>=0.1.3

@@ -144,3 +144,7 @@ real, not advisory.
 3. Use `docker inspect` + `jq` to extract just the container's IP address.
    *(hint:* `docker inspect web | jq -r '.[0].NetworkSettings.IPAddress'`)
 4. What's the difference between `docker stop` and `docker kill`? (See `--help`. Hint: signals.)
+
+## Next
+
+→ `lab-02-images-and-layers.md`: you ran an image; now crack one open — layers, the union filesystem, and why image size and build order matter.

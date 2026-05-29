@@ -365,13 +365,12 @@ You can now:
 - [ ] Diagnose a hallucination as a retrieval-quality or grounding failure, not a model
   failure.
 
-## Tie back / forward
+## Tie back
 
 The generation call is the *exact* Phase 06 path — `/v1/chat/completions` → `http` Gateway →
 `AgentgatewayBackend` → Qwen vLLM → kube-proxy → Pod — with retrieval bolted on the front. You
-added no new gateway machinery; you reused it. Next:
+added no new gateway machinery; you reused it.
 
-→ `lab-03-agentic-rag.md`: stop *always* retrieving. Make `retrieve` a **tool** an agent
-decides to call — as a Strands `@tool` in your `agents/` framework and as an MCP tool a kagent
-Agent calls via `RemoteMCPServer` (Phase 07). Retrieval becomes a harness tool, not a hardcoded
-step.
+## Next
+
+→ `lab-03-agentic-rag.md`: turn the fixed pipeline into a *tool* an agent decides to call — retrieve only when the question needs it.

@@ -1,0 +1,160 @@
+site_name: Learn Kubernetes → an AI Platform on Akamai
+site_description: >-
+  A panel-designed, offline-first curriculum — Linux → Docker → Kubernetes → vLLM, then the
+  platform layer (gateways, AI gateway, agents, Wasm, Akamai LKE, RAG, observability).
+site_author: Du'An Lightfoot
+site_url: https://labeveryday.github.io/learn-k8s/
+repo_url: https://github.com/labeveryday/learn-k8s
+repo_name: labeveryday/learn-k8s
+edit_uri: edit/main/
+
+# Content lives in the repo root (phase folders), not a docs/ subdir. `docs_dir: .` points
+# MkDocs at the repo root; the same-dir plugin resolves the site_dir-inside-docs_dir conflict.
+docs_dir: .
+plugins:
+  - search
+  - same-dir
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle: { icon: material/weather-night, name: Switch to dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle: { icon: material/weather-sunny, name: Switch to light mode }
+  features:
+    - navigation.sections     # phases as grouped sections in the sidebar
+    - navigation.indexes      # a phase README becomes its section landing page
+    - navigation.top          # back-to-top button
+    - navigation.footer       # clickable prev / next at the bottom of every page
+    - navigation.tracking
+    - toc.follow
+    - content.code.copy       # copy button on every code block
+    - search.suggest
+    - search.highlight
+
+markdown_extensions:
+  - admonition                # "What you should see" / "Break it" / gotcha callouts
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences      # fenced code + the ASCII diagrams
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+
+# Keep non-curriculum markdown out of the site (the agents/ template, project scaffolds, etc.)
+exclude_docs: |
+  /.venv/
+  /.github/
+  /site/
+  /agents/
+  /images/
+  /.claude/
+  /linode-deployment.md
+  /requirements-docs.txt
+  /02-docker/project-fastapi-redis/
+  /02-docker/tmp/
+
+nav:
+  - Home: README.md
+  - Read this first (Platform Track map): PLATFORM-TRACK.md
+  - 00 · Prep:
+      - 00-prep/README.md
+  - 01 · Linux:
+      - 01-linux/README.md
+      - 01-linux/lab-01-shell-and-files.md
+      - 01-linux/lab-02-processes-and-signals.md
+      - 01-linux/lab-03-networking.md
+      - 01-linux/lab-04-namespaces-and-cgroups.md
+      - 01-linux/exercises.md
+  - 02 · Docker:
+      - 02-docker/README.md
+      - 02-docker/lab-01-first-container.md
+      - 02-docker/lab-02-images-and-layers.md
+      - 02-docker/lab-03-dockerfile.md
+      - 02-docker/lab-04-networking.md
+      - 02-docker/lab-05-volumes.md
+      - 02-docker/lab-06-compose.md
+  - 03 · Kubernetes:
+      - 03-kubernetes/README.md
+      - 03-kubernetes/lab-01-architecture-and-kind.md
+      - 03-kubernetes/lab-02-pods.md
+      - 03-kubernetes/lab-03-deployments-and-replicasets.md
+      - 03-kubernetes/lab-04-services-and-networking.md
+      - 03-kubernetes/lab-05-config-and-secrets.md
+      - 03-kubernetes/lab-06-storage.md
+      - 03-kubernetes/lab-07-ingress.md
+      - 03-kubernetes/lab-08-probes-and-lifecycle.md
+      - 03-kubernetes/lab-09-rbac-and-security.md
+      - 03-kubernetes/lab-10-observability-and-debug.md
+      - 03-kubernetes/lab-11-helm-and-kustomize.md
+      - 03-kubernetes/exercises.md
+  - 04 · vLLM:
+      - 04-vllm/README.md
+      - 04-vllm/lab-01-vllm-locally.md
+      - 04-vllm/lab-02-on-kubernetes.md
+      - 04-vllm/lab-03-probes-and-autoscale.md
+      - 04-vllm/lab-04-gpu-notes.md
+  - 05 · Gateway API:
+      - 05-gateway-api/README.md
+      - 05-gateway-api/lab-01-gateway-api-crds.md
+      - 05-gateway-api/lab-02-kgateway.md
+      - 05-gateway-api/lab-03-kong.md
+      - 05-gateway-api/lab-04-kgateway-vs-kong.md
+  - 06 · AI Gateway:
+      - 06-ai-gateway/README.md
+      - 06-ai-gateway/lab-01-vllm-backend.md
+      - 06-ai-gateway/lab-02-kgateway-ai.md
+      - 06-ai-gateway/lab-03-kong-ai.md
+      - 06-ai-gateway/lab-04-multimodel-guards.md
+  - 07 · kagent:
+      - 07-kagent/README.md
+      - 07-kagent/lab-01-install-kagent.md
+      - 07-kagent/lab-02-modelconfig-agent.md
+      - 07-kagent/lab-03-agent-with-tools.md
+      - 07-kagent/lab-04-bridge-to-strands.md
+      - 07-kagent/lab-05-agent-harness.md
+  - 08 · SpinKube:
+      - 08-spinkube/README.md
+      - 08-spinkube/lab-01-spin-local.md
+      - 08-spinkube/lab-02-install-spinkube.md
+      - 08-spinkube/lab-03-deploy-spinapp.md
+      - 08-spinkube/lab-04-akamai-functions.md
+      - 08-spinkube/lab-05-akamai-functions-rag.md
+  - 09 · Akamai LKE:
+      - 09-lke-akamai/README.md
+      - 09-lke-akamai/lab-01-provision-lke.md
+      - 09-lke-akamai/lab-02-nodebalancer-storage.md
+      - 09-lke-akamai/lab-03-gpu-vllm.md
+      - 09-lke-akamai/lab-04-capstone-teardown.md
+  - 10 · RAG:
+      - 10-rag/README.md
+      - 10-rag/lab-01-embeddings-and-vector-store.md
+      - 10-rag/lab-02-the-rag-pipeline.md
+      - 10-rag/lab-03-agentic-rag.md
+  - 11 · Observability:
+      - 11-observability/README.md
+      - 11-observability/lab-01-metrics.md
+      - 11-observability/lab-02-traces.md
+      - 11-observability/lab-03-quality-cost.md
+      - 11-observability/lab-04-langfuse.md
+  - Reference:
+      - reference/operating-clusters.md
+      - reference/kubectl-cheatsheet.md
+      - reference/docker-cheatsheet.md
+      - reference/linux-cheatsheet.md

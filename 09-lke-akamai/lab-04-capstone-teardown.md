@@ -472,3 +472,7 @@ platform, one floor at a time.
 
 > **Kelsey:** "The engineer who can delete the cluster sleeps better than the one who only
 > knows how to create it."
+
+## Next
+
+→ **Phase 10** (`10-rag/`): with the platform live on real LKE, build the first real *application* on it — RAG Q&A over your own data, from the vLLM + gateway you already run plus one new piece (a vector store).

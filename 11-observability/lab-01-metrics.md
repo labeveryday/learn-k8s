@@ -442,10 +442,12 @@ You can now:
 - [ ] Read queue depth and TTFT p95 react to real load.
 - [ ] Diagnose a dead target by reading `up == 0`, not a blank graph.
 
-## Tie back / forward
+## Tie back
 
 This rides the Phase 03 stack you own: the ServiceMonitor resolves to the vLLM Service's
 ClusterIP, and the scrape is plain HTTP DNAT'd by kube-proxy — same machinery as `lab-04`.
-Metrics tell you p95 *doubled*; they can't tell you *where* the time went. That's the next
-lab: → `lab-02-traces.md` follows **one** request across the gateway, the agent loop, and
-the model to show you exactly which hop is slow.
+Metrics tell you p95 *doubled*; they can't tell you *where* the time went — that's the next lab.
+
+## Next
+
+→ `lab-02-traces.md`: metrics tell you p95 latency doubled but not *where*; a trace follows one request across every hop to show which service ate the time.

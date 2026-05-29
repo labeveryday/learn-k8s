@@ -372,7 +372,7 @@ You can now:
 - [ ] Encode latency and error SLOs as PrometheusRules and watch one fire.
 - [ ] State why "up, fast, cheap" is necessary but not sufficient — and what catches the gap.
 
-## Tie back / forward
+## Tie back
 
 Every signal here rides machinery you already own: the cost panel reads counters scraped via
 the lab-01 ServiceMonitor (Phase 03 Service/DNAT underneath), the SLO error rule reads the

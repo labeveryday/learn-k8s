@@ -563,13 +563,12 @@ You can now:
   readable chunks.
 - [ ] Diagnose a dimension-mismatch error from either side of the contract.
 
-## Tie back / forward
+## Tie back
 
 This is pure Phase 03 underneath — two Deployments, two Services, a Job, a ConfigMap, all
 reached by CoreDNS — wearing a new hat. You built the **retrieval** half of RAG: a searchable
-semantic memory. Next:
+semantic memory; the next lab wires it to generation.
 
-→ `lab-02-the-rag-pipeline.md`: wire retrieval to generation. Embed the question, take the
-top-k chunks you just learned to fetch, stuff them into a chat prompt, and send it to the Qwen
-vLLM **through your Phase 06 gateway** — so RAG inherits the token limits and guards you
-already built.
+## Next
+
+→ `lab-02-the-rag-pipeline.md`: you can embed and store; now wire the full retrieve → stuff → generate pipeline and route the generation through your Phase 06 gateway.

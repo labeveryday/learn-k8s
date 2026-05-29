@@ -215,6 +215,9 @@ CLAUDE.md
 output/
 image_samples
 
+# Lab scratch build contexts (students create these themselves; e.g. 02-docker lab-03)
+02-docker/tmp/
+
 
 .DS_Store
 

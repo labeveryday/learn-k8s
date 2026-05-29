@@ -234,3 +234,7 @@ You can now:
 You've finished Floor 1. Next floor: `06-ai-gateway/` — the same gateways, now routing to
 your vLLM with token-aware limits. The "5 requests/min" plugin from lab 03 and the
 agentgateway data plane from kgateway both lead straight there.
+
+## Next
+
+→ **Phase 06** (`06-ai-gateway/`): the same gateway you just compared becomes an *AI* gateway — token-based rate limits, multi-model routing, and prompt guards in front of vLLM.
