@@ -18,11 +18,18 @@ swap in a bigger model. That helps marginally, costs more, and you'll hit the sa
 modes one notch up. **The leverage is in everything around the model**, and engineering
 that is a discipline with a name.
 
+> **How to run this lab:** unlike labs 01–04, this one is **read-and-map, not type-and-run**.
+> The code blocks below are skeletons that show *where* a control hooks in; they're design
+> sketches, not complete drop-in files. Your job is to understand each guide/sensor and map
+> it onto pieces you already have — not to copy-paste a finished implementation. The "Break
+> it" at the end is a thought experiment, not a command.
+
 ## What it is: `agent = model + harness`
 
-Birgitta Böckeler's framing, now shared across the field: **an agent = a model + a
-harness**, where the harness is *"everything in an AI agent except the model itself."* It's
-the third wave of the craft:
+The one practical claim: **reliability comes from the controls around the model, not a
+bigger model.** The framing is Birgitta Böckeler's — **an agent = a model + a harness**,
+where the harness is *"everything in an AI agent except the model itself."* It's the third
+wave of the craft:
 
 ```
 prompt engineering (2022)  →  context engineering  →  HARNESS engineering
@@ -40,7 +47,8 @@ Borrowed straight from control systems — the agent is a *governor*, regulated 
 - **Guides (feedforward)** — steer it *before* it acts: the system prompt, the tool set you
   expose, context you inject, budgets, allow-lists. You shape the action space up front.
 - **Sensors (feedback)** — observe *after* it acts and force self-correction: tests,
-  linters, an LLM-as-judge, a verification checklist, traces.
+  linters, an LLM-as-judge (a second model call that grades the first one's output), a
+  verification checklist, traces.
 
 Each comes in two flavors:
 
@@ -92,15 +100,78 @@ guards) *for free* — harness controls applied once, at the platform, not re-co
 That's the "self-hosted agentic platform on Akamai" story with a sharper point: the platform
 *is* part of the harness.
 
+**See the guides you already wrote as YAML.** Three rows of that table are kagent CRDs you
+applied in labs 02–03 — the harness was hiding in fields you've already shipped. Re-read them
+through the guide/sensor lens:
+
+```yaml
+# ModelConfig (manifests/modelconfig-vllm.yaml) — the "model abstraction" guide.
+# Swapping the model the agent uses is a field, not a code change.
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: vllm
+  namespace: kagent
+spec:
+  provider: OpenAI
+  model: "Qwen/Qwen2.5-0.5B-Instruct"
+  apiKeySecret: vllm-api-key          # the key lives in a Secret, not the manifest
+  apiKeySecretKey: api-key
+  openAI:
+    # THE harness seam: point this at vLLM directly (now) OR at the Phase 06 gateway
+    # host instead, and every agent call inherits the token 429 + prompt guards. One field
+    # decides whether the platform regulates this agent.
+    baseUrl: "http://vllm.default.svc.cluster.local:8000/v1"
+---
+# Agent (manifests/agent-with-tools.yaml) — two guides in one object.
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: k8s-helper
+  namespace: kagent
+spec:
+  description: "A concise Kubernetes helper that can inspect the cluster."
+  type: Declarative
+  declarative:
+    modelConfig: vllm
+    systemMessage: |                   # GUIDE (context mgmt): the per-agent prompt, steered up front
+      You are a concise Kubernetes assistant with read access to the cluster.
+      Use your tools to check real state before answering. Answer in one or two sentences.
+    tools:
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer        # tools come from a deployed MCP server (decoupled from the agent)
+          name: kagent-tool-server
+          toolNames:                   # GUIDE (tool set): the ALLOW-LIST — Ashby's variety, made literal
+            - list_pods                #   the agent CANNOT call anything not on this list,
+            - get_pod                  #   so its action space is small enough to actually regulate
+            - list_events
+```
+
+- **`openAI.baseUrl`** is the single most load-bearing field in this lab: it's where the
+  *platform* harness (Step 3) attaches. Same field name as Strands' `client_args["base_url"]`
+  (lab-04) — point either at the gateway and the regulation switches on with zero code.
+- **`toolNames`** is requisite variety as a YAML list. Omit it and the agent inherits *every*
+  tool the `RemoteMCPServer` discovered — a larger, harder-to-harness action space. Listing
+  three names is a feedforward guide. Gotcha: the names must match what your kagent version
+  actually exposes — confirm with `kubectl describe remotemcpserver kagent-tool-server -n
+  kagent`, not a guess.
+- **`systemMessage`** is your context guide. Changing it and re-`apply`-ing is the kagent
+  half of the steering loop (last table row) — you iterate the *harness*, not the run.
+
 ## 1. Add a guide: inject context on behalf of the agent
 
 The principle: *"context engineering on behalf of agents"* — don't make the agent discover
 its environment, hand it over. Add a hook to your lab-04 Strands agent (mirror
 `src/hooks/logging_hook.py`) that, at startup, injects the available tools and a short
-house "how we work here" preamble into context. Strands' lifecycle events live in
-`strands.hooks` — `AgentInitializedEvent` (startup), `BeforeToolCallEvent` /
-`AfterToolCallEvent`, and `AfterInvocationEvent` (after a response) are the hooks a harness
-hangs off of.
+house "how we work here" preamble into context. Strands' lifecycle hooks split across two
+modules: `strands.hooks` has `AgentInitializedEvent` (startup) and `AfterInvocationEvent`
+(after a response); the tool-level `BeforeToolInvocationEvent` / `AfterToolInvocationEvent`
+(the pair `src/hooks/logging_hook.py` already imports) live in `strands.experimental.hooks`.
+Those are the hooks a harness hangs off of. (Strands has been promoting these out of
+`experimental` and renaming them across versions — match whatever your installed SDK and
+`logging_hook.py` use.)
 
 ```python
 # src/hooks/context_hook.py  — a feedforward GUIDE
@@ -139,11 +210,53 @@ harness controls switch on with zero new code:
 - **Prompt guard (inferential guide):** the `AgentgatewayPolicy` blocks a bad prompt
   *before* it reaches the model.
 
+The prompt guard is the inferential guide you built in Phase 06 lab-04 — and it's pure
+harness, expressed as a policy that *attaches* to your route. Worth re-reading now that you
+have the vocabulary for it:
+
+```yaml
+# AgentgatewayPolicy (Phase 06, manifests/kgateway-prompt-guard.yaml) — a shared GUIDE.
+# It isn't a route; it ATTACHES to one, so every agent behind that route inherits it.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: llm-prompt-guard
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute                  # the harness control attaches to the ROUTE, not each agent
+      name: llm
+  backend:
+    ai:
+      promptGuard:
+        request:                       # evaluated on the INBOUND prompt, before the model sees it
+          - response:
+              message: "Rejected: request appears to contain a US SSN."
+            regex:
+              action: Reject           # CRD enum is [Mask, Reject] — PascalCase; all-caps REJECT fails validation
+              matches:
+                - pattern: '\b\d{3}-\d{2}-\d{4}\b'
+                  name: ssn
+```
+
+- This is a **feedforward guide** (it steers *before* the model acts) and **inferential**
+  (it's pattern-matching the prompt's meaning, not a pass/fail unit test). Deployed once on
+  the route, it guards every agent behind it — the "apply harness controls at the platform"
+  point made concrete.
+- Field gotcha carried over from Phase 06: `action` is **PascalCase** (`Reject`, not
+  `REJECT`), and `matches` is a **list of objects** (`{pattern, name}`), not a bare string.
+  The schema wins over any blog snippet.
+
 ```bash
-kubectl -n kgateway-system port-forward svc/http 8080:80 &
+kubectl -n kgateway-system port-forward svc/http 8080:80 &   # local 8080 → the "http" Gateway Service :80 in kgateway-system; & backgrounds it
 # point the agent's base_url at the gateway (lab-04, Step 1 tie-in), then run a task
 # that loops — watch it get cut off by YOUR token limit, not by luck.
 ```
+
+`svc/http` is the kgateway proxy Service for the `http` Gateway (Phase 05/06) — the same
+front door your gateway labs used. Sending the agent's `base_url` *through* it is what wires
+the platform's sensor (`429`) and guide (prompt guard) onto your own agent.
 
 **What to look for:** your own agent, governed by your own platform. That's requisite
 variety in action — the platform regulates the agent.
@@ -154,9 +267,9 @@ Two more guides, both cheap:
 
 - A `max_iterations` cap so the loop can't run forever (Strands exposes turn/iteration
   limits; pair it with `max_tokens`).
-- **Loop detection:** a `BeforeToolCallEvent` hook that tracks repeated *identical* tool
-  calls and breaks the "doom loop" after N — the agent reconsiders instead of retrying the
-  same failing edit.
+- **Loop detection:** a `BeforeToolInvocationEvent` hook (`strands.experimental.hooks`, the
+  same event `logging_hook.py` uses) that tracks repeated *identical* tool calls and breaks
+  the "doom loop" after N — the agent reconsiders instead of retrying the same failing edit.
 
 **What to look for:** an agent that gives up *intelligently* on a dead end instead of
 burning your budget on the same mistake.
@@ -172,7 +285,8 @@ failures and proposes harness changes.)
 
 ## Break it, then read the error (Kelsey lens)
 
-Turn a sensor **off** and watch the failure return. Remove the Step 2 verification step (or
+A thought experiment, not a command (this lab is design, not type-and-run). Picture turning
+a sensor **off** and watching the failure return: remove the Step 2 verification step (or
 the Step 3 token budget), then give the agent a task it tends to fumble:
 
 **Read what happens.** Without the verify sensor, the agent confidently returns a wrong

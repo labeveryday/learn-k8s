@@ -34,18 +34,58 @@ Here it's your in-cluster vLLM at `http://vllm.default.svc.cluster.local:8000/v1
 
 ## 1. Tell kagent about your model
 
-```bash
-kubectl apply -f manifests/modelconfig-vllm.yaml
+`manifests/modelconfig-vllm.yaml` is **two objects in one file** (`---` splits them) — a
+`Secret` holding the API key and the `ModelConfig` that references it. Here's the whole
+thing, then the fields that carry the weight:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vllm-api-key            # the ModelConfig will reference this by name (apiKeySecret)
+  namespace: kagent             # MUST be the same namespace as the ModelConfig — Secrets don't cross namespaces
+type: Opaque
+stringData:
+  # Local vLLM ignores the key, but the ModelConfig schema requires the field to exist.
+  api-key: "not-needed-for-local-vllm"   # stringData = plain text in; the apiserver base64-encodes it for you
+---
+apiVersion: kagent.dev/v1alpha2  # same API group/version as the Agent — kagent's own CRDs
+kind: ModelConfig
+metadata:
+  name: vllm                     # the Agent names THIS in declarative.modelConfig (section 2)
+  namespace: kagent
+spec:
+  provider: OpenAI               # "speak the OpenAI wire protocol" — NOT "use api.openai.com"
+  model: "Qwen/Qwen2.5-0.5B-Instruct"   # must EXACTLY match what your vLLM serves, or the call 404s
+  apiKeySecret: vllm-api-key     # which Secret holds the key (the one above)
+  apiKeySecretKey: api-key       # which KEY inside that Secret's data — i.e. Secret.stringData.api-key
+  openAI:
+    baseUrl: "http://vllm.default.svc.cluster.local:8000/v1"  # the endpoint — your in-cluster vLLM, not the cloud
 ```
 
-Open the manifest and read it — it's two objects:
+The load-bearing idea is the split between `provider` and `baseUrl`. `provider: OpenAI`
+selects the **protocol** (kagent will format requests the OpenAI way); `baseUrl` selects the
+**destination**. Together they say "talk OpenAI-style to *this* host." That's why there's no
+special "self-hosted" mode — your vLLM is just another OpenAI endpoint at a different URL.
 
-- a `Secret` (`vllm-api-key`) holding a placeholder key. Local vLLM ignores the key, but
-  the `ModelConfig` schema still requires the field to exist, so you give it a dummy value.
-  This is the "config that *must* be present even when unused" pattern from Phase 03.
-- the `ModelConfig` itself: `provider: OpenAI`, `model: Qwen/Qwen2.5-0.5B-Instruct`, and
-  `openAI.baseUrl` pointing at the vLLM Service. The provider says "speak the OpenAI
-  protocol"; the `baseUrl` says "to *this* endpoint instead of api.openai.com."
+Two beginner gotchas, both silent:
+
+- **`apiKeySecret` / `apiKeySecretKey` are two different things.** The first names the Secret
+  *object* (`vllm-api-key`); the second names the *key inside it* (`api-key`). Mismatch either
+  and the controller can't read the key — even though, for local vLLM, the value is a dummy.
+  The field is still mandatory: this is the "config that must be present even when unused"
+  pattern from Phase 03.
+- **The Secret must live in `namespace: kagent`,** the same namespace as the `ModelConfig`.
+  A `ModelConfig` can't reference a Secret in another namespace; put it in `default` and the
+  controller will report it can't find the key.
+
+```bash
+kubectl apply -f manifests/modelconfig-vllm.yaml   # applies BOTH objects (Secret + ModelConfig) in one call
+```
+
+> The `model:` string must **exactly** match what your Phase 06 vLLM actually serves, or
+> the call 404s. Confirm with `kubectl exec` or `curl http://localhost:8000/v1/models`
+> (after a `port-forward svc/vllm 8000:8000`) and edit the manifest if yours differs.
 
 ```bash
 kubectl get modelconfig -n kagent
@@ -62,8 +102,23 @@ the controller hands to any `Agent` that names it.
 
 ## 2. Define an Agent that can actually resolve
 
-```bash
-kubectl apply -f manifests/agent-helper.yaml
+`manifests/agent-helper.yaml` is a complete agent expressed as one Kubernetes object — no
+Python, no Dockerfile. Read it before applying:
+
+```yaml
+apiVersion: kagent.dev/v1alpha2  # v1alpha2: agents are typed (the type field below picks the flavor)
+kind: Agent
+metadata:
+  name: k8s-helper               # the name you'll invoke in section 3
+  namespace: kagent
+spec:
+  description: "A concise Kubernetes helper backed by local vLLM."  # stays on spec, NOT under declarative
+  type: Declarative              # controller-run agent — kagent builds + runs the runtime Pod for you
+  declarative:                   # everything the managed runtime needs lives in this block
+    modelConfig: vllm            # names the ModelConfig from section 1 — THE link that makes this resolve
+    systemMessage: |             # the prompt baked into the agent; '|' keeps the newlines
+      You are a concise Kubernetes assistant. Answer in one or two sentences.
+      Prefer correctness over completeness. If unsure, say so.
 ```
 
 This is the same `Agent` shape as the `ghost` from lab-01 — `type: Declarative`, with
@@ -71,7 +126,17 @@ This is the same `Agent` shape as the `ghost` from lab-01 — `type: Declarative
 top of `spec` — but this time `modelConfig: vllm` names a `ModelConfig` that **exists**.
 That single difference is what lets the controller reconcile it.
 
+Gotchas worth internalizing here:
+
+- **`modelConfig: vllm` is a name reference, not a URL.** It must match a `ModelConfig` named
+  `vllm` in the same namespace (the one you applied in section 1). Reference a name that
+  doesn't exist and you've recreated the `ghost` — the Agent sits not-ready forever.
+- **`type: Declarative` is what makes this a managed workload.** It tells the controller to
+  stand up and run the agent runtime for you; the `declarative:` block is *only* read for that
+  type. `description` deliberately sits on `spec`, one level up — a common place to misnest.
+
 ```bash
+kubectl apply -f manifests/agent-helper.yaml      # create the Agent object; the controller does the rest
 kubectl get agent -n kagent
 kubectl describe agent k8s-helper -n kagent      # watch status go Ready
 ```
@@ -89,19 +154,21 @@ misbehaves later, this is the first place you look, because:
 ## 3. Talk to it — no Python process anywhere
 
 kagent exposes agents through its API/UI; the controller proxies your request to the agent
-runtime Pod. Port-forward the kagent service and invoke:
+runtime Pod. The Helm install created a Service named `kagent` listening on port 80 that
+fronts that invocation API — see it with `kubectl -n kagent get svc kagent`. Forward it to
+local 8081 (8080 is taken by the Phase 06 gateway) and invoke:
 
 ```bash
-kubectl -n kagent port-forward svc/kagent 8081:80 &
+kubectl -n kagent port-forward svc/kagent 8081:80 &   # local 8081 → Service port 80; '&' backgrounds it so you can type the next command
 
-# Using the kagent CLI (if installed):
+# Primary path — the kagent CLI you installed in lab-01:
 kagent invoke --agent k8s-helper --task "In one sentence, what is a Kubernetes Service?"
 
-# Or hit the API directly (shape depends on kagent version):
+# No CLI? Fallback: hit the same port-forwarded API with curl:
 # curl -s http://localhost:8081/api/agents/k8s-helper/invoke \
-#   -H 'Content-Type: application/json' -d '{"task":"what is a Service?"}'
+#   -H 'Content-Type: application/json' -d '{"task":"In one sentence, what is a Kubernetes Service?"}'
 
-kill %1 2>/dev/null
+kill %1 2>/dev/null                                   # %1 = the backgrounded port-forward — stop it when done
 ```
 
 **What to look for:** a one-sentence answer that matches the `systemMessage`'s "concise"
@@ -113,13 +180,16 @@ happened **in the cluster, on your model**. That's the entire point of Phase 07.
 ## 4. Observe it like any workload
 
 ```bash
-kubectl -n kagent logs deploy/kagent --tail=50
-kubectl get events --sort-by=.lastTimestamp | tail
+kubectl -n kagent logs deploy/kagent --tail=50      # logs from the controller Pod (deploy/ picks its current Pod); last 50 lines
+kubectl get events --sort-by=.lastTimestamp | tail  # cluster events oldest→newest, so the freshest are at the bottom
 ```
 
-**What to look for:** the invocation shows up in logs and events — the observability you'd
-never get from a laptop script. This is the practical payoff of "agent as object": when
-something goes wrong, there's a paper trail in the cluster, not just a terminal you closed.
+**What to look for:** lines mentioning your agent name (`k8s-helper`) and an inbound
+invocation/request around the timestamp you ran the call — the controller logging that it
+routed your task and got a response back. If nothing references the invocation, the call
+never reached the controller: re-check the port-forward is still alive and you hit 8081.
+This is the practical payoff of "agent as object": when something goes wrong, there's a
+paper trail in the cluster, not just a terminal you closed.
 
 ## Break it: point the model at the wrong port, then read the failure
 
@@ -128,8 +198,8 @@ different from the lab-01 *reconcile* failure? Find out. Edit the `ModelConfig` 
 to a wrong port and re-apply, then invoke again:
 
 ```bash
-kubectl describe agent k8s-helper -n kagent
-kubectl -n kagent logs deploy/kagent --tail=50
+kubectl describe agent k8s-helper -n kagent         # conditions: likely STILL clean — the spec is valid
+kubectl -n kagent logs deploy/kagent --tail=50      # the logs: THIS is where the runtime connection error shows up
 ```
 
 **Read the error, that's the lesson.** The `Agent` still looks structurally fine — its spec

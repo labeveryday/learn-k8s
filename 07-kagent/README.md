@@ -28,8 +28,9 @@ when it turned a binary-you-run into a Deployment-it-manages.
 
 - Phases 03–06. Strongest if vLLM (Phase 04/06) is reachable in-cluster so your agents
   use **your** model, not a hosted API.
-- Familiarity with **MCP** (Model Context Protocol) — your `agents/` code already uses
-  tools; kagent wires MCP servers in as `RemoteMCPServer` resources (lab-03).
+- No prior **MCP** (Model Context Protocol) knowledge needed — we introduce it in lab-03.
+  For a preview, skim `agents/examples/mcp_docs_agent.py`; kagent wires MCP servers in as
+  `RemoteMCPServer` resources.
 
 ## The three nouns
 

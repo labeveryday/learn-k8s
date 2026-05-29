@@ -46,6 +46,18 @@ The teaching point: **in-memory brute-force RAG is the right tool when the corpu
 and static** (a product FAQ, a runbook) and you want zero infra. You graduate to Phase 10's
 vector DB when it grows. A function with a baked-in corpus is "RAG without a database."
 
+> **The 4-sentence RAG primer (Phase 10 teaches this in depth; here's what you need now).**
+> An **embedding** is a list of numbers (a vector) that represents a piece of text's
+> meaning, produced by an embeddings model. **Cosine similarity** measures how close two
+> such vectors point, on a 0–1 scale (1 = same meaning); you score your question's vector
+> against every chunk's vector. **Top-k** keeps the *k* highest-scoring chunks; a
+> **relevance floor** drops any whose score is too low to be worth feeding the model.
+> **RAG** = retrieve those chunks, paste them into the prompt, and let the LLM answer
+> *from them* instead of from memory. (**ANN / HNSW** in the table above = "approximate
+> nearest-neighbor" search via a "hierarchical navigable small world" index — a data
+> structure that finds close vectors fast without scoring all of them; Phase 10's Qdrant
+> uses it, this lab doesn't need it.)
+
 ## Under the hood (MIT hat): the agent loop, and where each hop goes
 
 ```
@@ -84,12 +96,32 @@ Two mechanisms to hold onto:
 > address — which is exactly Phase 09's LKE **NodeBalancer** URL. Hosted-vs-sovereign isn't
 > just a key swap; it's a reachability decision about where each piece lives.
 
+## 0. Prereqs
+
+- The `spin` CLI and the `hello-spin` toolchain from lab-01; the `aka` plugin + preview
+  access from lab-04 (only needed for Step 5's deploy — Steps 1–4 run locally).
+- **An OpenAI API key** exported as `OPENAI_API_KEY` — `build-corpus.mjs` (Step 1) and the
+  local-test commands (Step 4) read it. (Or substitute your Phase 10 `vllm-embed` endpoint
+  + your gateway; swap the URLs/models accordingly.) Sign up at platform.openai.com if you
+  don't have one.
+- **Node.js installed** — `build-corpus.mjs` is a one-time Node script that embeds the
+  corpus offline.
+- **Cost note:** every embeddings call (corpus build + each query) and every chat call is
+  billed by OpenAI. The corpus here is three lines, so it's pennies — but it's not free.
+
 ## 1. Scaffold the function and bake the corpus
 
 ```bash
-spin new -t http-js rag-fn --accept-defaults
+spin new -t http-js rag-fn --accept-defaults   # -t = template; http-js scaffolds a JS HTTP handler + spin.toml
 cd rag-fn
 ```
+
+- `-t http-js` picks the JavaScript HTTP component template (the same toolchain you fetched in
+  lab-01). `--accept-defaults` skips the interactive prompts (name/description) so it scaffolds
+  non-interactively.
+- **What you should see:** a new `rag-fn/` dir with `spin.toml`, `package.json`, and a
+  `src/index.js` stub — that stub is where the Step 2 handler goes; the `spin.toml` is what you
+  edit in Step 3.
 
 Precompute embeddings for a tiny corpus **offline** (run once; needs an embeddings endpoint —
 hosted, or your Phase 10 `vllm-embed` via port-forward) and write `corpus.json`:
@@ -118,6 +150,24 @@ writeFileSync("corpus.json", JSON.stringify(corpus));
 console.log(`baked ${corpus.length} chunks`);
 ```
 
+Run it once. With just `OPENAI_API_KEY` exported it uses the hosted defaults; the three
+`process.env.* ??` fallbacks are the *one place* you redirect it at your own platform —
+override them to embed against your Phase 10 `vllm-embed` instead:
+
+```bash
+node build-corpus.mjs                                 # hosted: reads OPENAI_API_KEY, text-embedding-3-small
+# — or point it at your own embeddings model (Phase 10), port-forwarded to localhost:8081 —
+EMBED_URL=http://localhost:8081/v1/embeddings \
+  EMBED_MODEL=BAAI/bge-small-en-v1.5 EMBED_KEY=unused node build-corpus.mjs
+```
+
+- `EMBED_URL` / `EMBED_MODEL` / `EMBED_KEY` map 1:1 to the script's three env reads — the
+  vectors must be produced by the **same model** you'll query with at runtime, or cosine
+  scores are meaningless (you can't compare vectors from different embedding spaces).
+- **What you should see:** `baked N chunks` printed and a new `corpus.json` on disk. Open it:
+  each entry is `{ text, vec: [ ...floats ] }` — your chunks plus their embeddings, computed
+  *now* so the function never has to embed the corpus at request time.
+
 `corpus.json` ships *inside* the `.wasm` bundle — your in-memory "DB."
 
 ## 2. Write the RAG agent handler
@@ -125,7 +175,12 @@ console.log(`baked ${corpus.length} chunks`);
 Inside the handler the `http-js` template scaffolds (see the
 [Spin JS SDK](https://spinframework.dev/v3/javascript-components) for the exact entry
 signature and the variables/KV imports), the agent logic is plain JS — `fetch` for outbound,
-cosine in a few lines:
+cosine in a few lines.
+
+> **This block is illustrative, not copy-paste-runnable.** `spinVar(...)` is a stand-in for
+> the SDK's real variable accessor (you import it — see the SDK link), and the template's
+> request-handler signature that calls `ragAnswer(query)` isn't shown. Wire those two from
+> the SDK docs; the retrieval/prompt/call logic in between is the part to study.
 
 ```js
 import corpus from "./corpus.json";   // baked-in chunks + vectors (step 1)
@@ -150,7 +205,10 @@ async function ragAnswer(question) {
   // 1. embed the query (the corpus is already embedded, offline)
   const qvec = (await post(`${EMB_BASE}/embeddings`, LLM_KEY,
                  { input: question, model: "text-embedding-3-small" })).data[0].embedding;
-  // 2. in-memory cosine search, top-2, with a relevance floor (the Phase 10 lesson)
+  // 2. in-memory cosine search, top-2, with a relevance floor (covered in Phase 10)
+  //    0.3 is a low bar on cosine's 0..1 scale: "drop chunks not even loosely related."
+  //    Tune per corpus — raise it to be stricter. (gpt-4o-mini below is just an example
+  //    OpenAI model; swap it, like text-embedding-3-small, for any you prefer.)
   const hits = corpus.map(c => ({ ...c, score: cos(qvec, c.vec) }))
                      .sort((a, b) => b.score - a.score).slice(0, 2)
                      .filter(h => h.score >= 0.3);
@@ -167,9 +225,6 @@ async function ragAnswer(question) {
 }
 // call ragAnswer(query) from the template's request handler and return its text as the response.
 ```
-
-`spinVar(...)` stands in for the SDK's variable accessor — wire it to the real import from
-the Spin JS SDK docs.
 
 ## 3. Declare permissions in `spin.toml`
 
@@ -197,7 +252,8 @@ llm_api_key    = "{{ llm_api_key }}"
 > **Stateful option:** for caching repeated query embeddings or holding short conversation
 > history, open the Akamai **KV store** (`key_value_stores = ["default"]` →
 > `Kv.openDefault()`). It's persisted and globally replicated but **app-scoped** and **not**
-> strongly consistent (`wasi:keyvalue/atomic` is unsupported) — fine for a cache, not for a
+> strongly consistent — a read isn't guaranteed to see the latest write (`wasi:keyvalue/atomic`,
+> the interface for safe compare-and-set, is unsupported) — so it's fine as a cache, not for a
 > counter you need to be exact. See the
 > [KV store docs](https://techdocs.akamai.com/akamai-functions/docs/use-the-key-value-store).
 
@@ -208,6 +264,16 @@ SPIN_VARIABLE_LLM_API_KEY=$OPENAI_API_KEY spin build && \
 SPIN_VARIABLE_LLM_API_KEY=$OPENAI_API_KEY spin up &
 curl -s -X POST http://127.0.0.1:3000/ -d '{"q":"What is the Osaka region code?"}'
 ```
+
+- `SPIN_VARIABLE_LLM_API_KEY=...` is how Spin sets the **`llm_api_key`** variable you marked
+  `required = true` in Step 3 — the env-var name is `SPIN_VARIABLE_` + the variable name,
+  upper-cased. Leave it unset and `spin up` refuses to start (the required variable has no
+  value). It must be present for both `build` (compiles the module + bundles `corpus.json`)
+  and `up` (runs it), hence repeated on each.
+- `&&` runs `up` only if `build` succeeds; the trailing `&` backgrounds `spin up` so the same
+  shell can `curl` it. (When done: `kill %1`, or `fg` then Ctrl-C.)
+- `spin up` serves on **`127.0.0.1:3000`** by default; `-d '{"q":...}'` is the request body
+  your handler parses for the question. `-X POST` because the handler reads the body.
 
 **What to look for:** an answer containing **`as-07`** — pulled from your baked corpus, not
 the model's memory (the facts are fictional on purpose). Ask `"What is 2+2?"` and the
@@ -221,21 +287,42 @@ spin aka deploy        # prints your stable public URL (lab-04)
 curl -s -X POST https://<your-fn-url>/ -d '{"q":"What is the block storage volume cap?"}'
 ```
 
+- `spin aka deploy` is the `aka` plugin (lab-04): it pushes the built `.wasm` (with
+  `corpus.json` baked in) to Akamai Functions and returns a **stable, public HTTPS URL** — no
+  port-forward, reachable from anywhere. The deploy carries the variable values from
+  `spin.toml`; the `required` `llm_api_key` is set the same way at deploy time (see lab-04).
+- The URL is `https` and public — the inverse of the localhost reachability rule above: a
+  *caller* anywhere can now reach your function, but the *function* still can only reach hosts
+  it's allow-listed AND that are publicly reachable (this is the Step 6 / Phase 09 hinge).
+
 **What to look for:** the same grounded answer (**`10 TiB`**), now from a serverless function
 that costs nothing at idle. You have a RAG agent with no server, no vector DB, no GPU — until
 you want one.
 
 ## 6. The provider swap: hosted → your own platform
 
-Change one variable to point at your model instead of OpenAI:
+Change one variable to point at your model instead of OpenAI — but it's really **three
+coordinated edits** in `spin.toml`, because the variable swap alone would be denied by the
+sandbox and answered by the wrong model:
 
 ```toml
+[component.rag-fn]
+allowed_outbound_hosts = [
+  "https://<your-lke-gateway-host>:443",   # 1. allow the gateway — else "Destination not allowed"
+]
+
 [component.rag-fn.variables]
-llm_base_url = "https://<your-lke-gateway-host>/v1"   # Phase 06 gateway on LKE (Phase 09)
+llm_base_url = "https://<your-lke-gateway-host>/v1"   # 2. point the base_url at the Phase 06 gateway on LKE (Phase 09)
 ```
 
-Add that host to `allowed_outbound_hosts`, set the model to `Qwen/Qwen2.5-0.5B-Instruct`,
-redeploy. **Same function, now sovereign** — it calls *your* vLLM through *your* gateway and
+```js
+const MODEL = "Qwen/Qwen2.5-0.5B-Instruct";   // 3. the model your vLLM actually serves (in the handler)
+```
+
+All three change together: (1) the host must be **allow-listed** (Step 3's deny-by-default,
+note the `:443`), (2) `llm_base_url` repoints the OpenAI-protocol client, and (3) `MODEL` must
+name a model your vLLM serves (`gpt-4o-mini` isn't on your gateway). Then `spin aka deploy`
+again. **Same function, now sovereign** — it calls *your* vLLM through *your* gateway and
 inherits its token budget and prompt guards. That's the 07/lab-04 bridge inside a serverless
 function. (Remember the reachability rule: a *deployed* function needs your gateway's
 *public* LKE URL, not a localhost port-forward.)

@@ -68,22 +68,30 @@ These are *only* CustomResourceDefinitions: they teach your cluster the new **no
 yet — and that gap is the entire lesson of step 3.
 
 ```bash
-# Pin the version. Check github.com/kubernetes-sigs/gateway-api/releases for latest.
-GWAPI=v1.5.1
+GWAPI=v1.5.1                                  # pin the version — see github.com/kubernetes-sigs/gateway-api/releases for latest
 kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/${GWAPI}/standard-install.yaml
 ```
 
-(`--server-side` because these CRDs are large; client-side apply can blow the
-annotation size limit. That's a real thing you'll hit — note it.)
+- **`standard-install.yaml`** is the *standard channel* bundle: the stable CRDs
+  (GatewayClass, Gateway, HTTPRoute, ReferenceGrant). There's also an
+  `experimental-install.yaml` with alpha resources (TCPRoute, TLSRoute, etc.) — stick
+  with standard until a lab tells you otherwise.
+- **`--server-side`** because these CRDs are huge. A normal (client-side) apply stashes
+  the whole manifest in a `last-applied-configuration` *annotation*, and annotations have
+  a ~256 KB limit these CRDs blow right past. Server-side apply skips that annotation
+  entirely. This isn't a style choice — client-side apply here errors out; note it.
 
 Verify the new resource types now exist:
 
 ```bash
-kubectl get crd | grep gateway.networking.k8s.io
-kubectl api-resources | grep -E 'gatewayclass|^gateways|httproute'
+kubectl get crd | grep gateway.networking.k8s.io           # the CRDs themselves
+kubectl api-resources | grep -E 'gatewayclass|^gateways|httproute'   # now usable as first-class kubectl nouns
 ```
 
-You should see `gatewayclasses`, `gateways`, `httproutes` (and `referencegrants`).
+**What you should see:** `gatewayclasses`, `gateways`, `httproutes`, and `referencegrants`
+listed as real resource types. They behave like built-in kinds now (`kubectl get gateways`
+works) — but creating one still does *nothing*, because no controller is watching. That gap
+is step 3.
 
 ## 2. Read the spec from the tool, not the web (Kelsey's rule)
 
@@ -91,36 +99,49 @@ When you don't know a field, ask the cluster — `explain` reads the live CRD sc
 it's never out of date with your installed version:
 
 ```bash
-kubectl explain gatewayclass.spec
-kubectl explain gateway.spec.listeners
-kubectl explain httproute.spec.rules
+kubectl explain gatewayclass.spec          # has spec.controllerName — names the controller, can't be changed after create
+kubectl explain gateway.spec.listeners     # the front door: each listener is name + port + protocol (+ optional TLS, allowedRoutes)
+kubectl explain httproute.spec.rules       # rules[].matches (path/header/method) → rules[].backendRefs (the Services)
 ```
 
-Map what you read back to the table above: `gatewayClassName` is the pointer from a
-Gateway up to its class; `listeners` is the front door; `rules[].backendRefs` is where
-an HTTPRoute finally names a Service.
+`explain` reads the schema of the CRD *you installed*, field descriptions and all, so it
+can't drift from your version the way a docs tab can. Map what you read back to the table:
+`gatewayClassName` is the pointer from a Gateway up to its class; `listeners` is the front
+door; `rules[].backendRefs` is where an HTTPRoute finally names a Service. Append a field
+name to drill in (`kubectl explain gateway.spec.listeners.tls`).
 
 ## 3. Prove there's no implementation yet (spec ≠ behavior)
 
-Create a Gateway pointing at a class that doesn't exist:
+Create a Gateway pointing at a class that doesn't exist. (`apply -f - <<'EOF'` feeds the
+manifest in from stdin — same as `apply -f file.yaml`, just inline so you can read the whole
+object here):
 
 ```bash
 kubectl apply -f - <<'EOF'
-apiVersion: gateway.networking.k8s.io/v1
+apiVersion: gateway.networking.k8s.io/v1   # standard-channel Gateway API group/version you just installed
 kind: Gateway
 metadata:
   name: ghost
 spec:
-  gatewayClassName: does-not-exist
+  gatewayClassName: does-not-exist         # THE point of this lab — names a class with no controller behind it
   listeners:
-  - name: http
-    port: 80
-    protocol: HTTP
+  - name: http                             # each listener needs a unique name within the Gateway
+    port: 80                               # the port this front door opens...
+    protocol: HTTP                         # ...and the protocol on it (HTTP | HTTPS | TLS | TCP | UDP)
 EOF
 
-kubectl get gateway ghost -o wide
-kubectl describe gateway ghost
+kubectl get gateway ghost -o wide          # PROGRAMMED will be False / no ADDRESS
+kubectl describe gateway ghost             # the 'why' lives in status.conditions
 ```
+
+Two things to notice about this object:
+
+- **`gatewayClassName` is a hard pointer, not a hint.** The Gateway is only ever as real as
+  the controller behind its class. Here the class doesn't exist, so nothing acts on the
+  object — it just sits there, valid and inert.
+- **No `allowedRoutes` here** (unlike the real Gateways in later labs). That field controls
+  which namespaces may attach HTTPRoutes; it's irrelevant for the ghost because no proxy is
+  ever provisioned to route to. We're testing the spec→controller gap, not routing.
 
 **Read the status, don't skim it.** Under `status.conditions` you'll see
 `Accepted=False` (reason like `NoResourcesFound` / `InvalidParameters`), or no

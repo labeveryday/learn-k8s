@@ -60,6 +60,8 @@ you already built and reads what they emit — without changing how a single req
                               steering loop (07/lab-05) ◄─────┘
 ```
 
+(OTLP = OpenTelemetry's wire protocol — how spans travel from a producer to a collector.)
+
 ## Prereqs
 
 - The local **kind** cluster from Phases 05–07 (cluster `kind`, context `kind-kind`),
@@ -79,7 +81,7 @@ you already built and reads what they emit — without changing how a single req
 | 01 | `lab-01-metrics.md` — install kube-prometheus-stack, scrape vLLM's `/metrics` and the gateway's Envoy stats, build the LLM golden-signals dashboard | exporter → scrape (pull) → TSDB → Grafana; a ServiceMonitor is a CRD the Operator compiles into scrape config |
 | 02 | `lab-02-traces.md` — wire Strands native OpenTelemetry, run an OTel Collector + Tempo, trace ONE agent request across its span tree | span context propagation; why a trace (not a log) shows *where* latency hides; ties to `07/lab-05` traces-as-feedback |
 | 03 | `lab-03-quality-cost.md` — token/cost accounting from vLLM metrics, a quality score via Strands Evals (LLM-as-judge), and two SLOs | the three questions (up/slow/good) and how they feed the harness steering loop |
-| 04 | `lab-04-langfuse.md` — self-host **Langfuse** on LKE (Object + Block Storage), repoint the lab-02 Strands traces at it, get cost + quality + prompt management in one LLM-native pane | Langfuse is an OTLP backend (one-var swap from Tempo); **Grafana = infra, Langfuse = LLM-native** |
+| 04 | `lab-04-langfuse.md` — self-host **Langfuse** on LKE (Object + Block Storage), repoint the lab-02 Strands traces at it, get cost + quality + prompt management in one LLM-native pane. **Requires Phase 09 LKE (real cluster + credits) — do this after 09, or skip on kind.** | Langfuse is an OTLP backend (one-var swap from Tempo); **Grafana = infra, Langfuse = LLM-native** |
 
 ## The one idea to carry out
 

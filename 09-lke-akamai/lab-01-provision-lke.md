@@ -63,17 +63,24 @@ Provisioning the cluster is provisioning that integration.
 
 ## Step 1 — Install and configure linode-cli
 
+Run every command in this phase from inside `09-lke-akamai/` (`cd 09-lke-akamai`) — the
+labs use relative paths and write `lke-kubeconfig.yaml` to this folder.
+
 ```bash
 pip install linode-cli --upgrade
-linode-cli configure        # paste a Personal Access Token; pick a default region
+linode-cli configure        # interactive: paste a Personal Access Token, pick a default region
 ```
+
+- `configure` writes `~/.linode-cli` with your token + defaults; every later command reuses
+  them, so you authenticate once. The token needs read/write on **Kubernetes** and
+  **Linodes** scopes — a read-only token will fail at `cluster-create` (Step 3), not here.
 
 `linode-cli` is just a typed wrapper over the Linode REST API — the same API the CCM
 calls from inside your cluster. Confirm it can talk to your account:
 
 ```bash
-linode-cli regions list
-linode-cli linodes types --text | head     # node plans + prices
+linode-cli regions list                     # every command is `<service> <action>` — here: regions, list
+linode-cli linodes types --text | head      # node plans + prices; --text = tab-separated (greppable), not the default table
 ```
 
 **What to look for:** the `types` output lists plan IDs like `g6-standard-4` and their
@@ -86,8 +93,10 @@ commands error, your token or region default is wrong — fix it before spending
 linode-cli lke versions-list
 ```
 
-**What to look for:** confirm `1.34` is offered. If you pin a version LKE doesn't list,
-`cluster-create` rejects it — a cheap failure to hit now rather than after a typo.
+**What to look for:** confirm `1.34` is offered. If it isn't (LKE drops old versions over
+time), pick the newest version shown and use that for `--k8s_version` in Step 3. If you pin
+a version LKE doesn't list, `cluster-create` rejects it — a cheap failure to hit now rather
+than after a typo.
 
 ## Step 3 — Create the cluster
 
@@ -97,11 +106,11 @@ accident.
 
 ```bash
 linode-cli lke cluster-create \
-  --label learn-k8s-platform \
-  --region us-ord \
-  --k8s_version 1.34 \
-  --node_pools.type g6-standard-4 \
-  --node_pools.count 2
+  --label learn-k8s-platform \        # cluster name; you'll match on it in the next block to grab the ID
+  --region us-ord \                    # MUST be a region from `regions list` (Step 1) — Chicago here
+  --k8s_version 1.34 \                 # MUST be a version from `versions-list` (Step 2), else rejected
+  --node_pools.type g6-standard-4 \    # worker plan: 4 vCPU / 8 GB, from the `types` list — this is what you pay for
+  --node_pools.count 2                 # how many of that worker the scheduler gets; 2 is the floor for these labs
 ```
 
 Each flag maps to a thing you already understand: `--node_pools.type` is the worker plan
@@ -109,27 +118,53 @@ Each flag maps to a thing you already understand: `--node_pools.type` is the wor
 on. The control plane isn't in here because you don't pay for or size it — that's the
 "managed" part.
 
-Grab the cluster ID — you'll need it for every later `linode-cli lke` call:
+`us-ord` (Chicago) is just *one* region — substitute any region from `regions list` near
+you. `g6-standard-4` is a 4 vCPU / 8 GB node from the `types` list, big enough for these
+labs; `count 2` gives the scheduler two workers. None of these are required values — they're
+a sensible default pulled from the lists you ran in Step 1.
+
+**What you should see:** the command returns immediately with a JSON blob for the new cluster
+(its `id`, `status: ready` may take a minute) — `cluster-create` only *requests* the cluster;
+Akamai provisions the control plane and nodes asynchronously. The meter starts now, not when
+nodes go `Ready`.
+
+Grab the cluster ID — you'll need it for every later `linode-cli lke` call. The Python here
+just pulls the numeric `id` of the cluster labeled `learn-k8s-platform` out of the JSON list:
 
 ```bash
 export LKE_ID=$(linode-cli lke clusters-list --json | python3 -c \
   'import sys,json;print([c["id"] for c in json.load(sys.stdin) if c["label"]=="learn-k8s-platform"][0])')
-echo "cluster id: $LKE_ID"
+echo "cluster id: $LKE_ID"   # a number like 123456 — re-run the export in any new shell, it isn't persisted
 ```
+
+- `--json` makes `clusters-list` emit machine-readable JSON instead of the human table; the
+  Python filters the list to the one matching your `--label` and prints its `id`.
+- `export` puts `LKE_ID` in *this shell only* — a fresh terminal won't have it, so re-run this
+  block (or the whole `KUBECONFIG` setup) if your `linode-cli lke` calls later complain about a
+  missing ID.
 
 ## Step 4 — Get the kubeconfig
 
 LKE hands you the kubeconfig base64-encoded inside a JSON field; decode it to a file and
-point `kubectl` at that file via `KUBECONFIG`:
+point `kubectl` at that file via `KUBECONFIG`. The Python one-liner does exactly that —
+base64-decodes the `kubeconfig` field into plain YAML (the `reference/operating-clusters.md`
+note does the same decode with `jq`/`base64 -d` if you prefer those tools):
 
 ```bash
 linode-cli lke kubeconfig-view --json $LKE_ID \
   | python3 -c 'import sys,json,base64;print(base64.b64decode(json.load(sys.stdin)[0]["kubeconfig"]).decode())' \
-  > lke-kubeconfig.yaml
+  > lke-kubeconfig.yaml                       # base64-decode the `kubeconfig` JSON field → plain YAML on disk
 
-export KUBECONFIG=$PWD/lke-kubeconfig.yaml
-kubectl get nodes -o wide
+export KUBECONFIG=$PWD/lke-kubeconfig.yaml    # point kubectl at THIS file; absolute path so it survives `cd`
+kubectl get nodes -o wide                     # first real call through the new kubeconfig
 ```
+
+- `KUBECONFIG` is an env var `kubectl` reads to decide *which* cluster it talks to. Set it
+  (not `--kubeconfig` on every call) and the rest of the phase Just Works against LKE. It's
+  **ambient state** — the same property the "Break it" section below weaponizes.
+- If `kubeconfig-view` errors with "not yet available," the control plane is still coming up;
+  wait ~30s and retry. The file must contain real YAML (a `clusters:`/`users:` block), not an
+  error string — `head lke-kubeconfig.yaml` if `get nodes` fails to connect.
 
 **What to look for:** two nodes, both `Ready`. The `-o wide` columns show real public/
 private IPs and the LKE node image — not the `kindnet` containers you saw before. The

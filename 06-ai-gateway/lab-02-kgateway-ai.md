@@ -34,9 +34,11 @@ guard the prompt. "AI gateway" means *it understands the protocol*, full stop.
 
 ## Under the hood (MIT hat): where the AI features actually live
 
-In kgateway 2.2+ the AI features moved **out** of the Envoy proxy and into a separate
-**agentgateway** data plane. (The old `gateway.aiExtension` path was deprecated in 2.1 and
-removed in 2.2.) That's why this phase installs with two extra flags and uses the
+kgateway now ships a **second** data-plane proxy, **agentgateway**, dedicated to AI traffic
+— that's what the two `--set` flags below turn on. It runs alongside the Envoy proxy from
+Phase 05, not instead of it. (Historically these AI features lived inside Envoy via a
+`gateway.aiExtension` path; that path was deprecated in 2.1 and removed in 2.2, which is why
+old docs differ.) That's why this phase installs with two extra flags and uses the
 `agentgateway.dev/v1alpha1` API group instead of `gateway.kgateway.dev` — these AI kinds
 live in agentgateway, not in core kgateway.
 
@@ -70,8 +72,10 @@ and kube-proxy does the packet work, exactly as in Phase 03.
 ## Step 1 — Install kgateway with agentgateway enabled
 
 This is the canonical kgateway install for the repo: same version pin as
-`05-gateway-api/lab-02`, both charts, plus the two AI flags. The AI resources are alpha,
-so you turn agentgateway on **and** enable the alpha APIs at install/upgrade time.
+`05-gateway-api/lab-02`, both charts, plus the two AI flags. Alpha APIs are experimental
+Kubernetes kinds that ship turned **off**; the first flag turns the agentgateway proxy on,
+and the second (`enableAlphaAPIs=true`) opts in so the apiserver will accept
+`AgentgatewayBackend`/`AgentgatewayPolicy` at all. You need both.
 Re-running it is idempotent, so it doubles as the "upgrade Phase 05's install" step:
 
 ```bash
@@ -110,35 +114,87 @@ hanging off it.
 
 A normal `backendRef` points at a Service and says nothing about protocol. An
 `AgentgatewayBackend` is its own object whose entire job is to tell the data plane "this
-endpoint speaks OpenAI":
+endpoint speaks OpenAI." Here is the whole object (`manifests/kgateway-ai-backend.yaml`),
+then the fields that carry the weight:
 
-```bash
-kubectl apply -f manifests/kgateway-ai-backend.yaml
+```yaml
+apiVersion: agentgateway.dev/v1alpha1   # AI kinds live in agentgateway.dev, NOT gateway.kgateway.dev
+kind: AgentgatewayBackend               # the new noun Step 1's enableAlphaAPIs turned on
+metadata:
+  name: vllm-ai                         # the HTTPRoute's backendRef names this (Step 3)
+  namespace: default                    # same ns as the route; backendRef resolves here
+spec:
+  ai:                                   # this backend is an AI endpoint, not a plain Service
+    provider:
+      openai:                           # "this endpoint speaks the OpenAI protocol"
+        model: "Qwen/Qwen2.5-0.5B-Instruct"   # the model name vLLM serves (lab-01)
+      # host/port are SIBLINGS of `openai`, under `provider` — NOT inside openai (the #1 trap).
+      host: vllm.default.svc.cluster.local   # the in-cluster vLLM Service DNS name
+      port: 8000                             # vLLM's port — the backend owns it, the route does NOT
 ```
 
-The shape that matters (and trips people up):
+Two things beginners get wrong here:
 
-- `spec.ai.provider.openai.model` — the model name vLLM serves.
-- `spec.ai.provider.host` / `spec.ai.provider.port` — the self-hosted endpoint. These sit
-  **beside** `openai`, under `provider` — *not* inside `openai`.
+- **`host`/`port` sit beside `openai`, not inside it.** They're peers under `provider`.
+  Nest them under `openai:` and the data plane falls back to its default target
+  (`api.openai.com:443`) and your self-hosted vLLM is never contacted.
+- **The port lives here, not on the route.** An AI `backendRef` (Step 3) carries no `port:`
+  — this object owns it. That's exactly the field the "break it" section below corrupts.
 
-Local vLLM needs no API key, so no auth is set. The payoff is the **provider
-abstraction**: for a *hosted* provider you'd drop `host`/`port` (agentgateway defaults to
-`api.openai.com:443`) and add `spec.ai.policies.auth.secretRef` — the **same object**,
-different target. Self-hosted vs hosted is a field change, not a redesign.
+There's no `auth` block because local vLLM needs no API key. That omission *is* the
+**provider abstraction**: for a *hosted* provider you'd drop `host`/`port` (agentgateway
+defaults to `api.openai.com:443`) and add `spec.ai.policies.auth.secretRef` — the **same
+object**, different target. Self-hosted vs hosted is a field change, not a redesign.
+
+```bash
+kubectl apply -f manifests/kgateway-ai-backend.yaml   # compiled into agentgateway config, not Envoy
+```
 
 **What to look for:** `kubectl get agentgatewaybackend vllm-ai` returns the object. The
-fact that it accepts means the alpha CRDs from Step 1 are really installed.
+fact that it accepts means the alpha CRDs from Step 1 are really installed (if not, you'd
+get `no matches for kind "AgentgatewayBackend"`).
 
 ## Step 3 — Route to it
+
+This `HTTPRoute` is Phase 05's shape with exactly **one** difference — the backend target.
+Read it (`manifests/kgateway-ai-route.yaml`):
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1   # standard Gateway API — the route is NOT an AI kind
+kind: HTTPRoute
+metadata:
+  name: llm                                # `describe httproute llm` and the policy targetRef use this
+  namespace: default
+spec:
+  parentRefs:
+    - name: http                           # attach to the "http" Gateway from Phase 05...
+      namespace: kgateway-system           # ...which lives in kgateway-system, not here
+  hostnames:
+    - "llm.example.com"                    # the curl below MUST send Host: llm.example.com or it 404s
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/chat/completions     # only the OpenAI chat path routes here
+      backendRefs:
+        - group: agentgateway.dev           # THE difference vs Phase 05: not a core Service...
+          kind: AgentgatewayBackend         # ...but the AI backend from Step 2
+          name: vllm-ai                     # no port: here — the AgentgatewayBackend owns it
+```
+
+The single load-bearing change is the `backendRefs` entry: `group`/`kind` point at the
+`AgentgatewayBackend` instead of a plain Service. Two gotchas:
+
+- **`group` and `kind` are mandatory here.** A plain-Service backendRef can omit them
+  (they default to the core Service). Point at a CRD and you must spell out
+  `group: agentgateway.dev` + `kind: AgentgatewayBackend`, or the route resolves to nothing.
+- **No `port:`.** A Service backendRef normally needs one; an AI backendRef does not,
+  because the port lives on the `AgentgatewayBackend` (Step 2). This is what the "break it"
+  section exploits.
 
 ```bash
 kubectl apply -f manifests/kgateway-ai-route.yaml
 ```
-
-This `HTTPRoute` is Phase 05's shape with exactly one difference: `backendRefs` names an
-`AgentgatewayBackend` (via `group: agentgateway.dev` / `kind: AgentgatewayBackend`)
-instead of a plain Service. Its `parentRef` is the `http` Gateway in `kgateway-system`.
 
 **What to look for:** check that the route attached to the Gateway:
 
@@ -163,6 +219,11 @@ curl -s http://localhost:8080/v1/chat/completions \
   | python3 -m json.tool
 ```
 
+`svc/http` is the Gateway's proxy Service from Phase 05 lab-02 (the `http` Gateway listens
+on 80); we forward `8080->80`. This is the gateway's front door, not vLLM's `8000` —
+traffic now enters at the gateway. And the `-H 'Host: llm.example.com'` must match the
+`HTTPRoute`'s hostname; that's how the gateway picks this route. Drop it and you'll 404.
+
 The request path is now: curl → kgateway (`http` Gateway, agentgateway data plane) → vLLM.
 Same front door as Phase 05, but the gateway *understood the payload* on the way through.
 
@@ -172,28 +233,60 @@ next step that same `usage` figure becomes the meter.
 
 ## Step 5 — Meter by tokens, not requests
 
-```bash
-kubectl apply -f manifests/kgateway-token-ratelimit.yaml
+This is the line a plain HTTP gateway cannot express. Read the policy
+(`manifests/kgateway-token-ratelimit.yaml`):
+
+```yaml
+apiVersion: agentgateway.dev/v1alpha1   # same AI API group as the backend
+kind: AgentgatewayPolicy                # a policy ATTACHES to a route; it isn't a route itself
+metadata:
+  name: llm-token-budget
+  namespace: default
+spec:
+  targetRefs:                           # which object this policy applies to...
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: llm                         # ...the route from Step 3, by name
+  traffic:
+    rateLimit:
+      local:                            # "local" = counted in-proxy, no external rate-limit service
+        # ~500 LLM tokens per minute, counted from each response's usage field.
+        - tokens: 500                   # the budget is in TOKENS — swap to `requests:` for the old limit
+          unit: Minutes                 # window unit: Seconds | Minutes | Hours
 ```
 
-This `AgentgatewayPolicy` sets a per-window **token** budget at
-`spec.traffic.rateLimit.local` — each entry is a `tokens:` count per `unit:`
-(`Seconds`/`Minutes`/`Hours`). The manifest sets ~500 tokens per minute. For AI backends
-the data plane reads each response's `usage` field and subtracts those tokens from the
-budget — instead of counting requests. (Swap `tokens:` for `requests:` and you'd have the
-old, request-based limit.) Burn it down:
+The whole point lives in the `local` entry: `tokens: 500` per `unit: Minutes`. For AI
+backends the data plane reads each response's `usage` field and subtracts prompt +
+completion tokens from this budget — instead of incrementing a per-request counter. Two
+things to notice:
+
+- **`tokens:` vs `requests:`.** Swap the one word and the *same* policy becomes the old
+  request-count limit. That single key is the API-gateway / AI-gateway line, in YAML.
+- **`local` means in-proxy.** The count is kept inside the agentgateway process per
+  replica, with no external rate-limit service to stand up — fine for one replica; across
+  many you'd reach for a global limiter.
+
+```bash
+kubectl apply -f manifests/kgateway-token-ratelimit.yaml   # attaches to route "llm" via targetRefs
+```
+
+Burn it down:
 
 ```bash
 for i in $(seq 1 12); do
+  # -o /dev/null discards the body; -w "%{http_code} " prints just the status, space-separated.
+  # max_tokens:128 makes each call SPEND ~100-130 tokens against the 500/min budget.
   curl -s -o /dev/null -w "%{http_code} " http://localhost:8080/v1/chat/completions \
     -H 'Content-Type: application/json' -H 'Host: llm.example.com' \
     -d '{"model":"Qwen/Qwen2.5-0.5B-Instruct","messages":[{"role":"user","content":"write a long paragraph about kubernetes"}],"max_tokens":128}'
 done; echo
 ```
 
-**What to look for:** a row of `200`s that flips to `429` — and it flips **before** 12
-requests, because each request spends ~100+ tokens against a 500-token budget. Roughly
-four to five fat requests exhaust it; a dozen tiny `max_tokens:4` requests would not. That
+**What to look for:** a row of `200`s that flips to `429` (Too Many Requests — the rate
+limiter tripped) — and it flips **before** 12 requests, because each fat request spends
+~100-130 tokens against a 500-token budget, so 500/min runs out after ~4-5 calls. We loop
+12 times just to be sure we cross the limit and see the `429`; a dozen tiny `max_tokens:4`
+requests would not. That
 asymmetry is the proof: the limit is counting *tokens read from `usage`*, not requests. A
 5-token call and a 500-token call cost differently. **That is the entire difference between
 an API gateway and an AI gateway.**
@@ -218,8 +311,8 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/v1/chat/completio
 kill %1 2>/dev/null
 ```
 
-**Read the error.** You get a `502` / connection error **at request time** — not at apply
-time. The apply *succeeded*: the CRD is schema-valid, the route still says `Accepted=True`.
+**Read the error.** You get a `502` (Bad Gateway — the proxy reached no working upstream) /
+connection error **at request time** — not at apply time. The apply *succeeded*: the CRD is schema-valid, the route still says `Accepted=True`.
 The break only shows up when the data plane tries to open a TCP connection to
 `vllm:9999` and nothing answers. That distinction is the whole lesson: **a valid config is
 not a working upstream.** The control plane accepted your intent; the data plane couldn't

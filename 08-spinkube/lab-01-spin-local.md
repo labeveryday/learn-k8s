@@ -42,6 +42,12 @@ sudo mv ./spin /usr/local/bin/spin
 spin --version
 ```
 
+- The `install.sh` script downloads the `spin` binary for your OS/arch into the *current
+  directory* (it doesn't install system-wide on its own) — that's why the next line moves it.
+- `sudo mv ./spin /usr/local/bin/spin` puts it on your `PATH` so `spin` works from anywhere;
+  `/usr/local/bin` is on `PATH` by default. (On a machine where you can't `sudo`, move it to
+  `~/.local/bin` instead and ensure that's on your `PATH`.)
+
 `spin` is the build-and-run CLI: it scaffolds projects, compiles your code to Wasm, and
 hosts the modules locally in its own `wasmtime`-based runtime. **What to look for:** a
 version prints. Everything below is this one binary — no Docker daemon involved.
@@ -53,14 +59,58 @@ spin new -t http-rust hello-spin --accept-defaults
 cd hello-spin
 ```
 
-The template wires up a Spin HTTP trigger → one component (your handler). Open
-`spin.toml` and read it: the `[[trigger.http]]` block maps a route (`/...`) to a
-component, and `[component.hello-spin]` names the `.wasm` that component will compile to.
-That manifest is the contract — remember it, because in lab-03 the same `spin.toml`
-fields (`[variables]`, `allowed_outbound_hosts`) decide whether the app can reach vLLM.
+- `spin new -t http-rust` picks the **http-rust template** (a Spin HTTP app whose handler
+  is Rust); `hello-spin` is the app name; `--accept-defaults` skips the interactive prompts
+  (description, etc.) and takes the template's defaults.
 
-Don't have the Rust toolchain? Use `-t http-js` or `-t http-go` — the SDK changes, the
-Spin model (trigger → component → one `.wasm`) does not.
+The template wires up a Spin HTTP trigger → one component (your handler). `spin.toml` is the
+**manifest** — Spin's analog of a Pod spec. Don't just "open it and move on": this is the
+contract that lab-03 leans on, so read it field-by-field now. Here is what the http-rust
+template emits, with the load-bearing fields called out:
+
+```toml
+spin_manifest_version = 2          # manifest schema version (Spin v2/v3 use 2 — not the app version)
+
+[application]
+name = "hello-spin"                # the app's name (you passed it to `spin new`)
+version = "0.1.0"
+authors = ["..."]
+description = ""
+
+[[trigger.http]]                   # WHAT invokes the component. [[...]] = a list, so an app can have many
+route = "/..."                     # this route → the component below. "/..." is a WILDCARD: all paths match
+component = "hello-spin"           # the trigger fires THIS component (id must match [component.<id>] below)
+
+[component.hello-spin]             # the component definition; the id ("hello-spin") is what the trigger names
+source = "target/wasm32-wasip1/release/hello_spin.wasm"   # THE DEPLOYABLE — the .wasm `spin build` writes here
+allowed_outbound_hosts = []        # deny-by-default network allowlist. EMPTY = the module can reach NOTHING (see below)
+[component.hello-spin.build]
+command = "cargo build --target wasm32-wasip1 --release"   # what `spin build` runs to PRODUCE that .wasm
+watch = ["src/**/*.rs", "Cargo.toml"]
+```
+
+The four fields that decide everything:
+
+- **`[[trigger.http]]` `route` → `component`** is the entire request-routing contract: a path
+  comes in, the named component runs. The component id under `[component.<id>]` **must** equal
+  the `component` the trigger names — mismatch and `spin up` can't resolve what to run.
+- **`source`** is the seam from the "break it" section below: Spin runs *this built `.wasm`*,
+  not your `src/lib.rs`. Note the Rust crate name gets underscored (`hello-spin` → `hello_spin.wasm`).
+- **`allowed_outbound_hosts = []`** is the deny-by-default sandbox in YAML form. Empty means the
+  handler cannot open *any* outbound connection. This is the field that bites you in lab-03: to
+  let the app call vLLM you must list its host here (e.g.
+  `["http://vllm.default.svc.cluster.local:8000"]`), or Spin blocks the call at runtime — no
+  error in the manifest, the request just fails. Lab-03's `[variables]` block (which doesn't
+  exist yet in this scaffold) is the *other* half of that wiring.
+
+**Beginner gotchas:** (1) `spin_manifest_version = 2` is the *schema* version, not your app's —
+leave it at `2`. (2) The component id appears in *three* places (the trigger's `component`,
+`[component.<id>]`, `[component.<id>].build`) and they all have to agree — renaming the app
+later means renaming all three.
+
+Don't have the Rust toolchain? Use `-t http-js` or `-t http-go` — the SDK and `[component.*.build]`
+`command` change (and a JS/Go app has no `wasm32-wasip1` Cargo target), but the Spin model
+(trigger → component → one `.wasm`) and the `allowed_outbound_hosts` sandbox do not.
 
 ## 3. Build to WebAssembly
 
@@ -68,8 +118,9 @@ Spin model (trigger → component → one `.wasm`) does not.
 spin build
 ```
 
-This compiles your handler to a WebAssembly module and writes the path declared in
-`spin.toml`. Now look at the actual deployable:
+`spin build` runs the `[component.hello-spin.build]` `command` from the manifest
+(`cargo build --target wasm32-wasip1 --release`) and drops the result at the `source` path
+you just read. Now look at the actual deployable:
 
 ```bash
 find . -name '*.wasm'
@@ -90,11 +141,13 @@ curl -s http://127.0.0.1:3000/
 kill %1 2>/dev/null
 ```
 
-`spin up` loads the `.wasm` into `wasmtime` and serves the HTTP trigger on `:3000`. The
-first request **instantiates** the module — that's the cold start, and it's in the
-single-digit milliseconds, not the seconds a container takes to come up. **What to look
-for:** the response is effectively instant on the very first call. There's no warm-up
-phase, because there's no image to pull and no namespace to build.
+`spin up` loads the `.wasm` into `wasmtime` and serves the HTTP trigger on `:3000`. (`&`
+runs it in the background; `%1` is its job number, so `kill %1` stops it.) The first
+request **instantiates** the module — that's the cold start, and it's in the single-digit
+milliseconds, not the seconds a container takes to come up. **What to look for:** the
+response is effectively instant on the very first call. There's no warm-up phase, because
+there's no image to pull and no namespace to build. If `curl` says *connection refused*,
+`spin up` hadn't finished binding `:3000` yet — wait a second and re-run the `curl`.
 
 ## Under the hood (MIT hat): what `spin up` actually does
 
@@ -119,7 +172,8 @@ Two things this buys you, and you should be able to name *why*:
   and namespaces and unpacking image layers. Nothing to tear down means idle costs
   nothing.
 - **Deny-by-default sandbox.** A Wasm module can't open a socket or touch the
-  filesystem unless the host grants it (Spin does this via WASI). That's why lab-03 has
+  filesystem unless the host grants it (Spin does this via WASI — the WebAssembly System
+  Interface, the standard for giving a sandboxed module controlled OS access). That's why lab-03 has
   to *explicitly* allow the vLLM host in `spin.toml`'s `allowed_outbound_hosts` — the
   module is sandboxed shut by default. The isolation is the runtime's, not a kernel
   namespace's.

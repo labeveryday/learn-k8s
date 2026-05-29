@@ -72,22 +72,36 @@ on someone else's platform. (Contrast a container, which still assumes a Linux u
 have:
 
 ```bash
-spin plugin install aka
-spin aka --help        # the Akamai subcommands
+spin plugin install aka   # fetches the plugin from the Spin plugin catalog into ~/.spin/plugins
+spin aka --help           # confirms it loaded — lists the Akamai subcommands (deploy, login, …)
 ```
+
+- `spin plugin install` extends the *same* `spin` binary from lab-01 — there's no separate
+  Akamai CLI to learn. `aka` becomes `spin aka <subcommand>`, sitting beside `spin build`/`spin up`.
+- If `spin aka --help` errors with "plugin not found," the install didn't land — re-run the
+  install (and check `spin --version`; the plugin tracks the CLI version).
 
 Authenticate to your Akamai Functions account per the
 [`aka` command reference](https://techdocs.akamai.com/akamai-functions/docs/aka-command-reference)
 (the exact login subcommand is preview-versioned — follow the reference, don't guess).
 
+> Reminder from Step 0: this is **read now, run when your preview access is granted**. Auth
+> and Steps 2–3 will only succeed once your access is approved — until then, read along.
+
 ## 2. Deploy the lab-01 app
 
-From the `hello-spin/` directory:
+From the `hello-spin/` directory (so `spin` reads *this* app's `spin.toml`):
 
 ```bash
-spin build           # same build as lab-01 — produces the .wasm
-spin aka deploy      # ship that .wasm to Akamai Functions
+spin build           # same build as lab-01 — compiles src/ to the .wasm spin.toml points at
+spin aka deploy      # uploads that .wasm + spin.toml to Akamai's Wasm host, returns a URL
 ```
+
+- `spin aka deploy` reads `spin.toml` for the artifact path and app name — no flags needed for
+  the happy path. It does **not** rebuild; it ships whatever `.wasm` `spin build` last produced
+  (the break-it section below turns that into the lesson).
+- There's no image registry step here (no `spin registry push` like the SpinKube path) — the
+  module is uploaded directly to the managed platform.
 
 **What to look for:** `spin aka deploy` **prints the public endpoint** of your app — a
 *stable URL that persists across re-deploys*. No cluster, no Service, no port-forward. The
@@ -96,8 +110,11 @@ URL is yours until you delete the app.
 ## 3. Call it — three runtimes, one app
 
 ```bash
-curl -s https://<the-url-spin-printed>/
+curl -s https://<the-url-spin-printed>/   # paste the exact URL the deploy step printed; -s hides the progress bar
 ```
+
+- This is a plain HTTPS GET against the managed endpoint — no `kubectl port-forward`, no
+  in-cluster DNS. The platform terminates TLS and routes the request straight to your `.wasm`.
 
 **What to look for:** the *same* response you got from `spin up` (lab-01, on your laptop) and
 from the SpinKube `Service` (lab-03, on your cluster). One `.wasm`, served three ways. That's
@@ -110,7 +127,7 @@ Edit the handler (change the response text), then **deploy without rebuilding**:
 
 ```bash
 # edit src/... , then SKIP spin build:
-spin aka deploy
+spin aka deploy        # ships the STALE .wasm — your edit only changed source, not the artifact
 ```
 
 **Read what happens.** You'll deploy the *old* `.wasm` (or hit a "no built artifact" error),

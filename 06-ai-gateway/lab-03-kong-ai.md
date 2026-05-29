@@ -64,10 +64,15 @@ stack — unchanged.
 From `05-gateway-api/lab-03`:
 
 ```bash
-helm repo add kong https://charts.konghq.com && helm repo update
-helm upgrade -i kong kong/ingress -n kong --create-namespace
+helm repo add kong https://charts.konghq.com && helm repo update  # register Kong's chart repo + refresh the index
+helm upgrade -i kong kong/ingress -n kong --create-namespace       # -i = install-or-upgrade (idempotent); creates the kong namespace if absent
 kubectl get gatewayclass kong
 ```
+
+- `helm upgrade -i` (`--install`) is the safe re-runnable form: it installs the release if it
+  doesn't exist and upgrades it if it does — so running this when Kong is already up is harmless.
+- `kong/ingress` is the OSS chart. Hold onto that fact — it's the whole point of Step 5: the
+  free chart doesn't ship the token-limiting plugin.
 
 **What to look for:** `kubectl get gatewayclass kong` shows the class with `ACCEPTED=True`.
 That's your proof the Kong controller is live and will act on the Gateway/HTTPRoute below
@@ -75,55 +80,154 @@ That's your proof the Kong controller is live and will act on the Gateway/HTTPRo
 
 ## Step 2 — A Gateway + route for LLM traffic
 
+This is an ordinary Gateway/HTTPRoute pair on `gatewayClassName: kong` — pure Gateway API,
+nothing "AI" about it yet. Here's the whole manifest (`manifests/kong-ai-route.yaml`), then
+the two fields that matter:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1   # standard Gateway API — not a Kong-specific CRD
+kind: Gateway
+metadata:
+  name: kong-llm
+  namespace: default
+spec:
+  gatewayClassName: kong       # tells the Kong controller (Step 1) to own this Gateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        from: All               # any namespace may attach a route to this listener
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kong-llm
+  namespace: default
+  annotations:
+    konghq.com/plugins: ai-proxy-vllm   # THE BINDING: attaches the KongPlugin named "ai-proxy-vllm" (Step 3) to this route
+spec:
+  parentRefs:
+    - name: kong-llm           # attach to the Gateway above (same name, same namespace)
+  hostnames:
+    - "llm.example.com"        # the route only matches requests with this Host header — note it in the Step 4 curl
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1          # match the OpenAI path prefix (/v1/chat/completions etc.)
+      # ai-proxy rewrites the upstream; this backendRef is a placeholder target.
+      backendRefs:
+        - name: vllm
+          port: 8000            # PLACEHOLDER — required by the HTTPRoute schema, but ai-proxy overrides it at request time
+```
+
+Two fields beginners trip on:
+
+- **The `konghq.com/plugins` annotation is the entire wiring.** Kong attaches a plugin to a
+  route *by annotation*, not by a field in the route spec. The value (`ai-proxy-vllm`) is the
+  *name of the KongPlugin object* you create in Step 3 — they must match exactly or the plugin
+  never fires. This is the deliberate difference from kgateway, which wires the LLM behavior
+  through a `backendRef` type instead.
+- **`backendRefs` is a placeholder, not the LLM target.** The HTTPRoute schema requires a
+  backend, so this names the `vllm` Service on port 8000 — but `ai-proxy` (Step 3) replaces the
+  upstream at request time with its own `upstream_url`. Don't expect this Service:port to be
+  where traffic actually lands.
+
+Apply it:
+
 ```bash
 kubectl apply -f manifests/kong-ai-route.yaml
 ```
 
-This is an ordinary Gateway/HTTPRoute pair on `gatewayClassName: kong`. Note the route's
-`backendRefs` points at the `vllm` Service on port 8000 — but that's a **placeholder**.
-The `ai-proxy` plugin in the next step overrides the upstream, so this backendRef exists
-mostly to satisfy the HTTPRoute schema. Nothing here is "AI" yet.
-
 **What to look for:** `kubectl describe httproute kong-llm` shows `Accepted=True`. At this
-point the route forwards plain HTTP — it does not yet understand OpenAI.
+point the route forwards plain HTTP to the placeholder backend — it does not yet understand
+OpenAI. The annotation is set, but the plugin it names doesn't exist yet (Step 3 fixes that).
 
 ## Step 3 — Attach the ai-proxy plugin
+
+This is the object the Step 2 annotation was pointing at. A `KongPlugin` named `ai-proxy-vllm`
+of type `ai-proxy` — the runtime that turns the placeholder route into an OpenAI proxy. Here's
+the whole manifest (`manifests/kong-ai-proxy-plugin.yaml`), then the load-bearing fields:
+
+```yaml
+apiVersion: configuration.konghq.com/v1   # Kong's own CRD group — NOT Gateway API
+kind: KongPlugin
+metadata:
+  name: ai-proxy-vllm        # MUST equal the route's konghq.com/plugins annotation value (Step 2) — that's the link
+  namespace: default
+plugin: ai-proxy             # the plugin family; "ai-proxy" = OpenAI-protocol LLM proxy. Top-level field, not under config
+config:
+  route_type: "llm/v1/chat"  # expect OpenAI CHAT requests → forward to /chat/completions (vs llm/v1/completions for base models)
+  model:
+    provider: openai         # normalize the request/response to OpenAI's wire format
+    name: Qwen/Qwen2.5-0.5B-Instruct   # the model name advertised; matches what the Step 4 curl sends
+    options:
+      # Point Kong's ai-proxy at the in-cluster vLLM service's chat endpoint.
+      upstream_url: "http://vllm.default.svc.cluster.local:8000/v1/chat/completions"  # the REAL upstream — overrides the route's placeholder backendRef
+  # Local vLLM needs no key; for a hosted provider, reference a header/secret here.
+  auth:
+    header_name: Authorization
+    header_value: "Bearer not-needed-for-local-vllm"   # ai-proxy injects this on the way out — the caller never sends/sees a key
+```
+
+The fields that make it work:
+
+- **`plugin: ai-proxy`** is a *top-level* field, not nested under `config`. A common slip is
+  putting it inside `config` — Kong then can't tell which plugin this is.
+- **`route_type: llm/v1/chat`** is the chat-vs-base contract from lab-01 surfaced as a plugin
+  setting. It tells `ai-proxy` to expect a chat-shaped request and forward to the chat endpoint;
+  `llm/v1/completions` would be the base-model path. Mismatch it against your model and you get
+  malformed forwards.
+- **`config.model.options.upstream_url`** is the actual LLM target — the full URL including the
+  `/v1/chat/completions` path. This is what *overrides* the route's placeholder `backendRef`.
+  Provider-swapping (to a hosted model) means changing `provider`/`name`/`upstream_url` here and
+  putting a real key in `auth.header_value`; the route in Step 2 never changes.
+- **`auth.header_value`** is injected by `ai-proxy` toward the upstream — the client never sends
+  it. For a hosted provider this is where a real `Bearer <key>` goes (ideally from a Secret); the
+  local vLLM ignores it, hence the dummy string.
+
+Apply it:
 
 ```bash
 kubectl apply -f manifests/kong-ai-proxy-plugin.yaml
 ```
 
-`kong-ai-proxy-plugin.yaml` is a `KongPlugin` of type `ai-proxy` with
-`route_type: llm/v1/chat` and the in-cluster vLLM as `model.options.upstream_url`. The
-route's annotation (`konghq.com/plugins: ai-proxy-vllm`, set in `kong-ai-route.yaml`) is
-what binds the plugin to the route. Now Kong speaks OpenAI on the front and forwards to
-vLLM on the back.
-
-We use `llm/v1/chat` to match the instruct model and the `/v1/chat/completions` endpoint
-the whole phase uses. (Kong's `route_type` also supports `llm/v1/completions` for
-base-model text completion — the same chat-vs-base split you met in lab-01, surfaced as a
-plugin setting.)
+Now Kong speaks OpenAI on the front and forwards to vLLM on the back. We use `llm/v1/chat` to
+match the instruct model and the `/v1/chat/completions` endpoint the whole phase uses. (Kong's
+`route_type` also supports `llm/v1/completions` for base-model text completion — the same
+chat-vs-base split you met in lab-01, surfaced as a plugin setting.)
 
 **What to look for:** the plugin applies clean. The binding is the annotation, not a
 backendRef — a deliberately different attachment model from kgateway. If you forget the
-annotation, the request in Step 4 would just hit the placeholder backend as plain HTTP.
+annotation (or the KongPlugin name doesn't match it), the request in Step 4 just hits the
+placeholder backend as plain HTTP and the OpenAI normalization never happens.
 
 ## Step 4 — Test it
 
 ```bash
 export PROXY_IP=$(kubectl get svc -n kong kong-gateway-proxy \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')   # pull the LoadBalancer IP into a var (empty on kind — see below)
 # On kind without MetalLB, port-forward instead:
 # kubectl port-forward -n kong svc/kong-gateway-proxy 8080:80 & PROXY_IP=localhost:8080
 
 curl -s http://$PROXY_IP/v1/chat/completions \
-  -H 'Content-Type: application/json' -H 'Host: llm.example.com' \
+  -H 'Content-Type: application/json' -H 'Host: llm.example.com' \   # Host MUST be llm.example.com — it's the HTTPRoute's hostname; wrong Host → 404
   -d '{"model":"Qwen/Qwen2.5-0.5B-Instruct","messages":[{"role":"user","content":"One sentence on API gateways:"}],"max_tokens":24}' \
-  | python3 -m json.tool
+  | python3 -m json.tool   # pretty-print the JSON response
 ```
 
+- `-H 'Host: llm.example.com'` is not optional: the route only matches that hostname (Step 2),
+  so without it Kong has no route to apply the plugin to and you get a 404 instead of a completion.
+- The body is a plain OpenAI chat request — you're talking OpenAI to Kong, and `ai-proxy`
+  forwards it to vLLM. The `model` value matches the plugin's `config.model.name`.
+- The commented `port-forward` line tunnels local `:8080` to the proxy Service's `:80` in the
+  background (`&`) and points `PROXY_IP` at it.
+
 On kind, the `LoadBalancer` Service usually has no external IP, so `$PROXY_IP` comes back
-empty — use the commented `port-forward` line instead.
+empty — use the commented `port-forward` line instead. (kind has no cloud load balancer, so
+`LoadBalancer` Services never get an external IP. MetalLB is an add-on that provides one;
+we don't install it here, which is why we port-forward.)
 
 **What to look for:** a normal chat completion with a `usage` block, just like lab-01 and
 lab-02. Identical response surface, third path to it — that's the portability point landing.
@@ -131,10 +235,11 @@ lab-02. Identical response surface, third path to it — that's the portability 
 ## Step 5 — Token rate limiting, Kong-style (and an honest limitation)
 
 Kong meters tokens with the `ai-rate-limiting-advanced` plugin — and here's a real
-lesson worth more than a copy-paste: on most builds that plugin is a **Kong Enterprise**
-feature, so the free OSS `kong/ingress` install you're running may not expose it. That's
-why this step ships **no manifest to apply**. Contrast that with lab-02, where kgateway's
-token limit was free and built in.
+lesson worth more than a copy-paste: the `kong/ingress` chart you installed in Phase 05 is
+the free open-source (OSS) edition, but on most builds `ai-rate-limiting-advanced` ships
+only in the paid **Kong Enterprise** edition — so there's nothing to apply on your cluster.
+That's why this step ships **no manifest to apply**. Contrast that with lab-02, where
+kgateway's token limit was free and built in.
 
 The *pattern* is identical to `ai-proxy`, though: on an Enterprise build you'd create a
 `KongPlugin` of type `ai-rate-limiting-advanced` and bind it to the route by annotation —
@@ -161,8 +266,14 @@ Re-run the Step 4 curl. **Read both the response and the log.** Kong returns a `
 the real story is in the proxy log:
 
 ```bash
-kubectl logs -n kong <proxy-pod>
+# label selector saves you from looking up the pod name (the label can vary by chart version):
+kubectl logs -n kong -l app.kubernetes.io/name=gateway   # -l selects pods by label instead of a hardcoded pod name
+# if that selects nothing, find the pod first: kubectl get pods -n kong  (the kong-gateway... pod)
 ```
+
+- `-l app.kubernetes.io/name=gateway` streams logs from whatever pod carries that label, so you
+  don't have to know the generated pod name. If the chart version uses a different label, the
+  selector matches nothing — fall back to naming the `kong-gateway...` pod directly.
 
 You'll see an upstream connection error naming the bad URL — Kong is fine; the *model* is
 unreachable. This is the same "valid config, dead upstream" lesson as lab-02's 502, but it

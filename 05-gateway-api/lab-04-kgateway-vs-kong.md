@@ -99,12 +99,56 @@ conditions.
 ## Prove the portability claim to yourself (2 minutes, no install)
 
 You don't have to take the recommendation on faith — you have both controllers running.
-Re-point a single route from one engine to the other and watch it move:
+Pull the route you ran on Kong and isolate the *one* field that binds it to an engine:
 
 ```bash
-# the kong route, repointed to kgateway's class — only the parent/class changes
-kubectl get httproute httpbin-kong -o yaml | grep -A3 parentRefs
+# print just the route's spec — the routing intent + the one field that binds it to an engine
+kubectl get httproute httpbin-kong -o yaml | yq '.spec'
 ```
+
+- `-o yaml | yq '.spec'` dumps the live route and prints **only** its `spec`, skipping the
+  `metadata`/`status` noise a raw `-o yaml` interleaves (`yq` was installed in `00-prep`). We
+  isolate the spec on purpose: the argument is "*one* field moves," so we look at exactly the
+  intent and its single engine binding.
+
+**What you should see** — `parentRefs` naming the Kong Gateway, and nothing else
+engine-specific (this is `.spec` itself, so there's no `spec:` wrapper line):
+
+```yaml
+parentRefs:
+- name: kong               # THE one engine binding: points at the Kong Gateway → Kong's class/controller
+hostnames:
+- httpbin.kong.example.com # routing INTENT — unchanged by a switch
+rules:                     # matches + backendRefs below are also pure intent
+- matches:
+  - path: { type: PathPrefix, value: / }
+  backendRefs:
+  - name: httpbin          # the Service you route to — same on any engine
+    port: 8000
+```
+
+Now compare it to the route you ran on kgateway (`manifests/httpbin-route.yaml`). Look at
+*only* the `parentRefs` — everything below it is byte-for-byte the same kind of intent:
+
+```yaml
+spec:
+  parentRefs:
+  - name: http               # <-- the ONLY difference: kgateway's Gateway...
+    namespace: kgateway-system  # ...which lives in kgateway-system (Kong's was default ns)
+  hostnames:
+  - httpbin.example.com      # different host so the two routes don't collide; not engine-specific
+  rules:
+  - matches:
+    - path: { type: PathPrefix, value: / }
+    backendRefs:
+    - name: httpbin
+      port: 8000
+```
+
+> **Gotcha:** `parentRefs[].name` references a `Gateway` *object*, not a `GatewayClass`.
+> The class (hence the engine) is chosen one level up, on the Gateway's `gatewayClassName`.
+> So "repoint to the other engine" = change which Gateway you name here; that Gateway's
+> class is what actually swaps Envoy for OpenResty.
 
 The thing that makes a switch a one-line change is that `parentRefs` (which Gateway, hence
 which class/engine) is the *only* engine-specific field. Matches, backendRefs, and
@@ -115,12 +159,53 @@ single observation: **intent is portable; the engine binding is one field.**
 
 The tempting wrong conclusion from labs 02–03 is "they're interchangeable, so it doesn't
 matter." Test it: where does interchangeability *end*? The moment you use an
-engine-specific extension. The `KongPlugin` + `konghq.com/plugins` annotation from lab 03
-is **not portable** — point that route at kgateway and the plugin annotation is simply
-ignored, because no Kong controller is watching to honor it. That's the boundary line of
-the standard: *the routing spec is portable; the extensions are not.* Read that as the
-exact reason axis 2 (extension model) is a real decision and not a checkbox — the day you
-adopt a vendor's plugin/filter is the day switching stops being one field.
+engine-specific extension. Look at the rate-limit you attached in lab 03
+(`manifests/kong-ratelimit-plugin.yaml`) — *this* is what doesn't move:
+
+```yaml
+apiVersion: configuration.konghq.com/v1   # NOT gateway.networking.k8s.io — a Kong-only API group
+kind: KongPlugin                          # a Kong CRD; no kgateway/Envoy controller watches this kind
+metadata:
+  name: rl-5-per-min
+plugin: rate-limiting                     # which Kong plugin from its catalog to run
+config:
+  minute: 5                               # 5 requests/min...
+  policy: local                           # ...counted in-process per replica (not a shared store)
+---
+apiVersion: gateway.networking.k8s.io/v1  # the ROUTE is standard Gateway API (portable)...
+kind: HTTPRoute
+metadata:
+  name: httpbin-kong
+  annotations:
+    konghq.com/plugins: rl-5-per-min      # ...but THIS annotation is the non-portable wiring
+spec:
+  parentRefs:
+  - name: kong
+  hostnames:
+  - httpbin.kong.example.com
+  rules:
+  - matches:
+    - path: { type: PathPrefix, value: / }
+    backendRefs:
+    - name: httpbin
+      port: 8000
+```
+
+Two things make this **not portable**, and they're worth naming precisely:
+
+- The `KongPlugin` is `configuration.konghq.com/v1` — a vendor API group. Repoint this
+  route at kgateway and the object still exists, but **no Kong controller is watching** to
+  compile it into the data plane, so it does nothing.
+- The wiring is an **annotation** (`konghq.com/plugins`), not a spec field. Gateway API
+  treats unknown annotations as opaque metadata, so kgateway reads the route, ignores the
+  annotation, and serves traffic with no rate limit — *silently*. Nothing errors; the
+  policy just vanishes.
+
+That's the boundary line of the standard: *the routing spec is portable; the extensions
+are not.* (The same is true in reverse — a kgateway `TrafficPolicy` CRD is invisible to
+Kong.) Read it as the exact reason axis 2 (extension model) is a real decision and not a
+checkbox — the day you adopt a vendor's plugin/filter is the day switching stops being one
+field.
 
 ## Deliverable (do this — it's content + interview gold)
 

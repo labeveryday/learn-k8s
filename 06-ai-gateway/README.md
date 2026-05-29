@@ -16,13 +16,16 @@ fixable with more HTTP routing:
 - **It can't route by intent.** The thing that says *which model the caller wants* is the
   `model` field inside the JSON body. Path/host/header routing never reads the body, so it
   can't fan one URL out to several models.
-- **It can't guard the prompt.** PII and jailbreak filtering need to inspect the prompt —
-  again, in the body — before it reaches any model.
+- **It can't guard the prompt.** Filtering for PII (personally identifiable information,
+  e.g. an SSN or credit-card number) and jailbreak prompts (inputs crafted to make the
+  model ignore its rules) needs to inspect the prompt — again, in the body — before it
+  reaches any model.
 
 The fix is a gateway that **understands the protocol**, not just HTTP: its data plane
 *parses* the OpenAI request and response. That single capability — reading the body —
 unlocks token metering (it sees `usage`), model routing (it sees `model`), prompt guards
-(it sees the prompt), and upstream auth the caller never sees. That's an "AI gateway."
+(it sees the prompt), and upstream (the backend the gateway forwards to — here, vLLM) auth
+the caller never sees. That's an "AI gateway."
 Both kgateway and Kong ship one. You'll put the vLLM from `04-vllm` behind it.
 
 ## Prereqs

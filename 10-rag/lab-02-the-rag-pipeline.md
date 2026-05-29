@@ -98,25 +98,114 @@ They're not exclusive: fine-tune for *how* to answer, RAG for *what* facts to us
 ## 0. Prereqs
 
 - lab-01 complete: `vllm-embed` running, Qdrant in `vectordb` with the `runbook` collection
-  populated (4 points, dim 384). Check: `kubectl -n vectordb exec ...` or re-run the lab-01
-  Step 4 verify.
+  populated (4 points, dim 384). Check (the lab-01 Step 4 verify, here in full):
+
+  ```bash
+  kubectl -n vectordb port-forward svc/qdrant 6333:6333 &
+  curl -s http://localhost:6333/collections/runbook | python3 -c 'import sys,json; d=json.load(sys.stdin)["result"]; print("points:",d["points_count"],"dim:",d["config"]["params"]["vectors"]["size"])'
+  kill %1 2>/dev/null
+  ```
+  Expect `points: 4 dim: 384`. If not, re-run lab-01 Step 4.
 - The **chat** vLLM (Qwen) from Phase 06 running: `kubectl get svc vllm`.
 - The Phase 06 **gateway** path: the `http` Gateway in `kgateway-system` and the
   `AgentgatewayBackend` named `vllm-ai`. Check: `kubectl get agentgatewaybackend vllm-ai`.
   If missing: `kubectl apply -f ../06-ai-gateway/manifests/kgateway-ai-backend.yaml`.
 
+  That backend (Phase 06's `kgateway-ai-backend.yaml`) is the object the RAG route in Step 1
+  points at, so it's worth seeing once — it describes vLLM as an OpenAI-protocol AI backend:
+
+  ```yaml
+  apiVersion: agentgateway.dev/v1alpha1
+  kind: AgentgatewayBackend
+  metadata:
+    name: vllm-ai                     # the name the RAG route's backendRef resolves to
+    namespace: default
+  spec:
+    ai:
+      provider:
+        openai:                       # vLLM speaks the OpenAI protocol → use the 'openai' provider
+          model: "Qwen/Qwen2.5-0.5B-Instruct"   # the model name vLLM serves
+        host: vllm.default.svc.cluster.local     # self-hosted: point at the IN-CLUSTER vLLM Service...
+        port: 8000                               # ...host/port sit on the provider block, NOT the HTTPRoute backendRef
+  ```
+
+  Gotcha: for a *hosted* provider you'd drop `host`/`port` (agentgateway defaults to
+  `api.openai.com:443`) and add an auth secretRef. Local vLLM needs no key, so none is set.
+  This is why Step 1's `ResolvedRefs=False` means *this* object is missing.
+
 ## 1. Add the RAG route to the gateway
 
+`manifests/rag-route.yaml` is two objects: an **HTTPRoute** (the new RAG path on the gateway)
+and an **AgentgatewayPolicy** (a token budget scoped to that route). Read both before applying
+— this is where the "RAG inherits the gateway" claim becomes a concrete YAML you can point at:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1   # standard Gateway API HTTPRoute (not a kgateway CRD)
+kind: HTTPRoute
+metadata:
+  name: rag
+  namespace: default
+spec:
+  parentRefs:
+    - name: http                  # attach to the SAME Phase 06 Gateway named 'http'...
+      namespace: kgateway-system  # ...which lives in kgateway-system (the route lives in default — cross-namespace)
+  hostnames:
+    - "rag.example.com"           # this route only matches requests whose Host header is rag.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/chat/completions   # only the chat-completions path — RAG's generation call
+      backendRefs:
+        - group: agentgateway.dev          # NOT a plain Service — it points at the kgateway AI CRD
+          kind: AgentgatewayBackend
+          name: vllm-ai                     # REUSE the Phase 06 backend (same Qwen vLLM); no new backend
+---
+apiVersion: agentgateway.dev/v1alpha1   # kgateway's policy CRD (same idiom as Phase 06 lab-02)
+kind: AgentgatewayPolicy
+metadata:
+  name: rag-token-budget
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io   # the policy ATTACHES to an HTTPRoute...
+      kind: HTTPRoute
+      name: rag                           # ...specifically the 'rag' route above — so it governs RAG only
+  traffic:
+    rateLimit:
+      local:
+        - tokens: 2000      # budget is in TOKENS, not requests — RAG prompts are big, so meter what they actually cost
+          unit: Minutes     # 2000 tokens per minute, then 429
+```
+
+Three fields carry the design and are easy to get wrong:
+
+- **`parentRefs.name: http` + `namespace: kgateway-system`.** The route attaches to the
+  *existing* Phase 06 Gateway — it doesn't create one. The Gateway is in `kgateway-system`
+  but this route is in `default`; that cross-namespace attach is allowed here because the
+  Gateway permits it. Get the name or namespace wrong and the route is "accepted" but bound to
+  nothing (the Phase 05 lab-01 "ghost" symptom).
+- **`backendRefs.group: agentgateway.dev` / `kind: AgentgatewayBackend`.** A normal HTTPRoute
+  points at a `Service`. This one points at the kgateway AI backend CRD instead — that
+  indirection is what gives you token-aware AI routing. The `name: vllm-ai` must match the
+  Phase 06 backend exactly; that's the reuse.
+- **`rateLimit.local[].tokens` (not requests).** Metering RAG by request count would be
+  dishonest — one RAG call with stuffed context costs many times a bare chat call. Token
+  budgets meter the real cost. `2000/Minutes` is deliberately generous *because* RAG prompts
+  are large; bare chat on `llm.example.com` keeps its own tighter budget, untouched.
+
+Apply it and read the route's status:
+
 ```bash
-kubectl apply -f manifests/rag-route.yaml
+kubectl apply -f manifests/rag-route.yaml   # creates both the HTTPRoute and the AgentgatewayPolicy
 kubectl get httproute rag -o wide
 ```
 
-This adds an HTTPRoute `rag` (hostname `rag.example.com`) that reuses the Phase 06 `vllm-ai`
-backend, plus an `AgentgatewayPolicy` token budget scoped to *this route only*. Read why it's
-a separate route, not just reusing `llm.example.com`: a distinct route is a distinct policy
-surface — RAG's prompts are large (you stuff chunks in), so RAG gets its own, more generous
-token budget without touching bare-chat callers.
+This adds the HTTPRoute `rag` (hostname `rag.example.com`) that reuses the Phase 06 `vllm-ai`
+backend, plus the `AgentgatewayPolicy` token budget scoped to *this route only*. Why a separate
+route, not just reusing `llm.example.com`: a distinct route is a distinct policy surface — RAG's
+prompts are large (you stuff chunks in), so RAG gets its own, more generous token budget without
+touching bare-chat callers.
 
 **What to look for:** under `status.parents[].conditions`, `Accepted=True` and
 `ResolvedRefs=True`. If `ResolvedRefs=False`, the `vllm-ai` backend is missing — that's the
@@ -132,6 +221,10 @@ kubectl port-forward svc/vllm-embed 8001:8000 &
 kubectl -n vectordb port-forward svc/qdrant 6333:6333 &
 kubectl -n kgateway-system port-forward svc/http 8080:80 &
 ```
+
+Leave these three up — Steps 2 and 3 both use them (and the "Break it" section). Clean them up
+at the end of the lab with `kill %1 %2 %3`. Don't re-run this block mid-lab or you'll stack
+duplicate forwards on the same ports.
 
 Now the pipeline as one script. Read it — it's the five steps, each labeled:
 
@@ -172,7 +265,10 @@ PY
    now feeding generation.
 2. `ANSWER:` — it should contain **`as-07`** (Osaka) and the **NodeBalancer HTTPS health-check**
    fix. Neither fact is in Qwen's training data — they're in *your* corpus. The model answered
-   from chunks you handed it. **That is RAG working.**
+   from chunks you handed it. **That is RAG working.** A tiny 0.5B model may phrase it loosely
+   or nail only one of the two facts — what matters is the facts come from your chunks, not the
+   exact wording. If `as-07` is missing, look at the `RETRIEVED` scores first: a low top score
+   is a retrieval miss, not a model miss.
 3. `usage:` — the token count. Note `prompt_tokens` is large: that's the stuffed context. This
    number is what the gateway's token budget meters — RAG is expensive per call *because* you
    send context, which is exactly why metering it at the gateway matters.
@@ -180,7 +276,9 @@ PY
 ## 3. Confirm the gateway is actually in the path
 
 The answer alone doesn't prove traffic went *through* the gateway. Prove it — hammer the route
-past its token budget and watch the gateway, not vLLM, cut you off:
+past its token budget and watch the gateway, not vLLM, cut you off. The budget (2000 tokens/min)
+is set in `rag-route.yaml` you applied in Step 1; ~8 of these large prompts is enough to cross
+it (hence `seq 1 8`):
 
 ```bash
 for i in $(seq 1 8); do
@@ -240,6 +338,8 @@ converts "no good evidence" into "I don't know" instead of a confident lie). Mos
 hallucinated" complaints are one of these two — not a model problem, a *pipeline* problem you
 control. Same Kelsey reflex as every phase: the system didn't get dumber; you removed the
 control that caught the failure.
+
+Done with the pipeline — stop the three port-forwards from Step 2: `kill %1 %2 %3`.
 
 ## Checkpoint — you can now explain…
 

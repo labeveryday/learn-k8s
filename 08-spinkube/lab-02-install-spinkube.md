@@ -37,8 +37,19 @@ runtime (`wasmtime` via the shim) and a `RuntimeClass` that selects it.
 
 ## 0. Prereqs
 
-The `spin` CLI from lab-01, plus `k3d`, `kubectl`, and `helm`. (`k3d cluster create`
-needs Docker running.) This lab builds a **dedicated** cluster — see Step 1 for why.
+The `spin` CLI from lab-01, plus `kubectl` and `helm` (from `00-prep`). This phase also
+needs **`k3d`** — a *new* tool the rest of the track didn't use (00-prep installed `kind`).
+We switch to k3d here for one reason: it can boot a node image with the Spin shim baked in
+(Step 1), and kind no longer publishes one. Install it now:
+
+```bash
+brew install k3d                                              # macOS
+# Linux: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+k3d version
+```
+
+(`k3d cluster create` needs Docker running.) This lab builds a **dedicated** cluster — see
+Step 1 for why.
 
 ## 1. A cluster whose nodes carry the Spin shim
 
@@ -54,6 +65,11 @@ k3d cluster create spin-lab \
   --port "8081:80@loadbalancer" \
   --agents 2
 ```
+
+`--agents 2` gives you two worker nodes (so you can see scheduling spread); `--port
+"8081:80@loadbalancer"` exposes the cluster's built-in load balancer on host port 8081 —
+boilerplate that lets you `curl` Services without a port-forward. This phase uses
+`kubectl port-forward` instead (lab-03), so 8081 goes unused here; leave it, it's harmless.
 
 **What to look for:** `k3d cluster create` finishes and `kubectl get nodes` shows the
 server + 2 agents `Ready`. The whole reason this image exists is the shim baked into its
@@ -77,8 +93,9 @@ containerd — that's the load-bearing detail of this lab.
 
 ## 2. cert-manager (operator dependency)
 
-The spin-operator runs an admission webhook (to validate/mutate `SpinApp` objects), and
-Kubernetes only calls webhooks over TLS. cert-manager issues and rotates that cert.
+The spin-operator runs an admission webhook (an HTTP callback the apiserver invokes to
+check or modify an object before it's stored — the `SpinApp`, here) and Kubernetes only
+calls webhooks over TLS. cert-manager issues and rotates that cert.
 
 ```bash
 helm repo add jetstack https://charts.jetstack.io && helm repo update
@@ -96,8 +113,8 @@ the operator install in Step 3 will also fail — the webhook cert won't exist.
 > run this (v1.20.0 is what the current SpinKube quickstart tests against). `crds.enabled=true`
 > installs cert-manager's own CRDs as part of the chart — keep it.
 
-cert-manager appeared in the Phase 05 README's "supporting cast" — here's where it earns
-its keep.
+cert-manager appeared in PLATFORM-TRACK.md's "supporting cast" ("TLS for your Gateways") —
+here's where it earns its keep.
 
 ## 3. RuntimeClass + Spin Operator
 
@@ -118,17 +135,54 @@ kubectl apply -f https://github.com/spinframework/spin-operator/releases/downloa
 
 What each line installs, mapped to the mechanism:
 
-- **`spin-operator.runtime-class.yaml`** → the `RuntimeClass wasmtime-spin-v2`. Read it:
-  its `handler: spin` is the name of the containerd runtime the k3d image registered for
-  the shim. That string is the entire switch — it points a pod at `wasmtime`.
+- **`spin-operator.runtime-class.yaml`** → the `RuntimeClass wasmtime-spin-v2`. This is
+  the entire switch, and it's only four load-bearing lines — don't apply it blind, read it
+  (a reference copy lives at `manifests/runtime-class.yaml`):
+
+  ```yaml
+  apiVersion: node.k8s.io/v1   # RuntimeClass is a core k8s API, NOT a SpinKube CRD — the switch is stock Kubernetes
+  kind: RuntimeClass
+  metadata:
+    name: wasmtime-spin-v2     # the name pods opt into via `runtimeClassName:` (lab-03's pods carry this)
+  handler: spin                # ← THE WHOLE POINT: the containerd runtime name the kubelet passes over the CRI
+  ```
+
+  `handler: spin` is a *plain string*, and that's the gotcha: nothing here installs a
+  runtime — it merely *names* one. It must match a runtime already registered in the
+  node's containerd config (the shim from Step 1). Apply this onto a node without the shim
+  and the object is created happily; the failure only shows up when a pod that uses it
+  tries to start (that's the "Break it" section). Note `handler` is a *top-level* field,
+  not under `spec` — a common copy-paste mistake.
+
 - **`spin-operator.crds.yaml`** → teaches the cluster the nouns `SpinApp` and
   `SpinAppExecutor` (same idea as the Gateway API CRDs in Phase 05: nouns now, behavior
-  when a controller watches them).
+  when a controller watches them). This is a large generated CRD bundle — you apply it,
+  you don't read it; the two `kind`s it registers are what matter.
 - **`helm install spin-operator --wait`** → the controller that watches `SpinApp`s.
-  `--wait` blocks until its pods are Ready, so a failure surfaces here, not later.
+  `--wait` blocks until its pods are Ready, so a failure surfaces here, not later. The
+  chart comes from an **OCI** registry (`oci://ghcr.io/...`) — note the `oci://` URL is the
+  chart *location itself*, so there's no `helm repo add` step for it (unlike cert-manager).
 - **`spin-operator.shim-executor.yaml`** → a `SpinAppExecutor` named
-  `containerd-shim-spin` that tells the operator *which* RuntimeClass to stamp onto the
-  pods it generates. This is the link between a `SpinApp` and `wasmtime-spin-v2`.
+  `containerd-shim-spin`. This is the link between a `SpinApp` and `wasmtime-spin-v2` —
+  and the field that does the linking is tiny:
+
+  ```yaml
+  apiVersion: core.spinkube.dev/v1alpha1   # a SpinKube CRD (registered by the crds.yaml above)
+  kind: SpinAppExecutor
+  metadata:
+    name: containerd-shim-spin             # the name a SpinApp references in its `executor:` field (lab-03)
+  spec:
+    createDeployment: true                 # the operator generates a Deployment for each SpinApp using this executor
+    deploymentConfig:
+      runtimeClassName: wasmtime-spin-v2   # ← stamps THIS RuntimeClass onto every generated pod — closes the loop to the switch above
+      installDefaultCACerts: true          # injects CA certs so the Wasm app can make outbound TLS calls (e.g. to vLLM in lab-03)
+  ```
+
+  The chain is now complete: a `SpinApp` names an `executor` → the `SpinAppExecutor` names
+  a `runtimeClassName` → the `RuntimeClass` names a `handler` → containerd routes to the
+  shim. The gotcha for lab-03: a `SpinApp` whose `executor:` doesn't match this name
+  (`containerd-shim-spin`) gets no RuntimeClass stamped, so its pod silently lands on
+  `runc` and fails exactly like the "Break it" probe below.
 
 > The project moved from the `spinkube` GitHub org to `spinframework`, and the chart
 > version moves in lockstep with the release tag — `spinframework/charts:0.4.0` does not
@@ -193,9 +247,16 @@ shim, then try to schedule a SpinApp pod onto it:
 ```bash
 k3d cluster create plain-lab          # default image — no containerd-shim-spin
 kubectl apply -f https://github.com/spinframework/spin-operator/releases/download/v0.6.1/spin-operator.runtime-class.yaml
-kubectl run wasm-probe --image=ttl.sh/hello-spin:1h --overrides='{"spec":{"runtimeClassName":"wasmtime-spin-v2"}}'
+kubectl run wasm-probe --image=ttl.sh/hello-spin:1h \
+  --overrides='{"spec":{"runtimeClassName":"wasmtime-spin-v2"}}'   # patch the bare pod to opt into the switch
 kubectl describe pod wasm-probe
 ```
+
+We apply *only* the RuntimeClass (the switch) — not the shim, not the operator — so the
+node has the switch but nothing to switch *to*. `--overrides` merges that raw JSON into
+the pod spec `kubectl run` generates; we do it by hand here because there's no operator on
+this throwaway cluster to stamp `runtimeClassName` for us. That one field is what forces
+the pod onto handler `spin`, which this node can't resolve.
 
 **Read the events at the bottom of `describe`.** The RuntimeClass exists (the API
 accepted the pod), so this isn't a scheduling or admission error. It fails at the

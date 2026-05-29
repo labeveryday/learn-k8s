@@ -2,6 +2,8 @@
 
 **Do this while you have internet.** Once done, the rest of the curriculum works offline.
 
+**Platform: macOS (Apple Silicon or Intel).** Setup uses Homebrew + Colima below. **On Linux:** install Docker Engine natively (your distro's package manager) and `kubectl kind helm k9s jq yq` the same way — skip Colima entirely (it only exists to run a Docker daemon on Macs). The rest of the curriculum is platform-agnostic. **On Windows:** use WSL2 and follow the Linux path.
+
 ## 1. Install tools
 
 Assuming Homebrew is installed (`brew -v`).
@@ -14,6 +16,8 @@ Docker Desktop requires a paid license for most companies (>250 employees or >$1
 brew install colima docker docker-compose
 colima start --cpu 4 --memory 8 --disk 60
 ```
+
+`--cpu 4 --memory 8` is what the labs need (see Colima notes below for why); `--disk 60` is comfortable headroom for the pre-pulled images plus cluster data — lower it if you're disk-constrained.
 
 Manage the VM:
 
@@ -31,7 +35,7 @@ If you *do* have a Docker Desktop license, it works too — just install it inst
 ### Kubernetes + the rest
 
 ```bash
-# Kubernetes local cluster + CLI
+# kubectl (CLI), kind (runs K8s in Docker locally), helm (package manager, Phase 3), k9s (terminal UI for clusters)
 brew install kubectl kind helm k9s
 
 # Used throughout the curriculum
@@ -39,18 +43,23 @@ brew install jq yq tree watch htop
 
 # For Python projects later (vLLM)
 brew install python@3.11
+
+# ollama (runs LLMs locally) — Phase 4 uses it as the no-image-pull fallback for vLLM
+brew install ollama
 ```
 
 ### Verify
 
 ```bash
 colima status                    # should be "Running"
-docker version                   # client + server present
-docker run --rm hello-world      # smoke test
-kubectl version --client
-kind version
-helm version
+docker version                   # prints Client AND Server version blocks; Server missing = daemon not up (re-run `colima start`)
+docker run --rm hello-world      # smoke test; prints "Hello from Docker!"
+kubectl version --client         # prints a Client Version line
+kind version                     # prints "kind vX.Y.Z ..."
+helm version                     # prints "version.BuildInfo{Version:...}"
 ```
+
+Each line above should print a version (no "command not found", no connection error). If `docker version` shows only the Client block, the Colima VM isn't running.
 
 ## 2. Pre-pull Docker images
 
@@ -63,9 +72,9 @@ bash pull-images.sh
 
 ## 3. Cache documentation offline
 
-Bookmark or download:
+Your primary offline aid is the `reference/` cheatsheets (kept open while you work) plus `man` pages and `kubectl explain` — that covers most of the curriculum. The downloads below are optional, handy only if you'll be *fully* offline:
 
-- **Kubernetes docs** (single-file): https://kubernetes.io/docs/home/  → *Download the site as PDF with your browser's print function, or `git clone https://github.com/kubernetes/website.git` for markdown.*
+- **Kubernetes docs:** `git clone https://github.com/kubernetes/website.git` for the markdown source. (You can also print kubernetes.io to PDF, but the whole site is huge — only bother if you really need it.)
 - **Docker docs:** `git clone https://github.com/docker/docs.git`
 - **Linux `man` pages:** already installed locally; use `man <cmd>`.
 - **vLLM docs:** `git clone https://github.com/vllm-project/vllm.git` (includes `/docs`).
@@ -77,13 +86,15 @@ Optional for deep dives:
 
 ## 4. Pre-download a model for vLLM capstone
 
-You already have ollama. For the vLLM phase we'll use a small Hugging Face model. Pull it now:
+You installed ollama in Section 1 (it's the Phase 4 fallback). For the vLLM phase we'll also pre-fetch a small Hugging Face model. Pull it now:
 
 ```bash
 # Small, CPU-friendly model for offline experimentation
-pip install --user huggingface_hub
-python -c "from huggingface_hub import snapshot_download; snapshot_download('TinyLlama/TinyLlama-1.1B-Chat-v1.0', local_dir='$HOME/models/tinyllama')"
+python3.11 -m pip install --user huggingface_hub
+python3.11 -c "from huggingface_hub import snapshot_download; snapshot_download('TinyLlama/TinyLlama-1.1B-Chat-v1.0', local_dir='$HOME/models/tinyllama')"
 ```
+
+`python3.11 -m pip` ties pip to the Python you installed in Section 1. If pip complains about an "externally-managed-environment," use a venv: `python3.11 -m venv ~/.venvs/hf && source ~/.venvs/hf/bin/activate`, then re-run the two lines above.
 
 If you can't install `huggingface_hub`, skip — phase 04 has a fallback using an ollama-served model.
 
@@ -96,7 +107,7 @@ kubectl get nodes                    # should list one node
 kind delete cluster --name sanity    # clean up
 ```
 
-If all four succeed, you're ready for Phase 1.
+If all four succeed, you're ready for Phase 1. If `kind create cluster` hangs or fails, its node image (`kindest/node`) probably didn't pull — re-run `pull-images.sh` while online.
 
 ## Colima notes (read once)
 

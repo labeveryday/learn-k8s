@@ -13,7 +13,7 @@ spec:
   # Uncomment to pass the vLLM endpoint to a prompt-shaping handler (lab-03 Step 4):
   # variables:
   #   - name: vllm_url
-  #     value: "http://vllm.default.svc.cluster.local:8000/v1/completions"
+  #     value: "http://vllm.default.svc.cluster.local:8000/v1/chat/completions"
   #
   # IMPORTANT: a SpinApp `variables` entry only *supplies* a value — it does not create
   # the variable. The variable must ALSO be declared in the app's spin.toml under

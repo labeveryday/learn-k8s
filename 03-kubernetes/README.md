@@ -38,7 +38,7 @@ Every feature (Deployments, Services, HPA) is a controller reconciling some piec
 - **apiserver**: REST front door; all reads/writes go here.
 - **etcd**: consensus-replicated KV store; the single source of truth.
 - **scheduler**: watches unscheduled Pods, assigns them to nodes.
-- **controller-manager**: runs built-in controllers (Deployment, ReplicaSet, Node, etc.).
+- **controller-manager** (the `cm` box above): runs built-in controllers (Deployment, ReplicaSet, Node, etc.).
 - **kubelet**: per-node agent; takes Pod specs from apiserver and runs them via container runtime.
 - **kube-proxy**: programs iptables/IPVS to implement Services.
 
@@ -49,6 +49,8 @@ spec (what you want) ──► controller ──► status (what is)
                              ▲
                              └── reconcile loop
 ```
+
+Reconcile = a controller wakes up, compares what you asked for (spec) to what exists (status), takes one step to close the gap, and loops forever.
 
 ## Labs
 

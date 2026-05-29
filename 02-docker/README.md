@@ -4,7 +4,7 @@
 
 ## Why this phase exists (Stanford)
 
-Before containers, "it works on my machine" was the default failure mode. Docker packages the *entire userland* an app needs into an image, runs it in isolated namespaces, and gives you a reproducible artifact. K8s is just an orchestrator for these — if you can't reason about a single container, you cannot reason about a thousand.
+Before containers, "it works on my machine" was the default failure mode. Docker packages the *entire userland* (all the libraries, binaries, and files an app needs above the kernel) into an image, runs it in isolated namespaces, and gives you a reproducible artifact. K8s is just an orchestrator for these — if you can't reason about a single container, you cannot reason about a thousand.
 
 ## What you'll do
 
@@ -23,7 +23,9 @@ docker CLI ──► dockerd (daemon) ──► containerd ──► runc ──
                        └── volumes
 ```
 
-On macOS, the daemon and all containers run inside a Linux VM. The CLI talks to it over a socket.
+`dockerd` is a background service (daemon) the `docker` CLI sends commands to over a local Unix socket (a file-like channel). `containerd` and `runc` are the runtime layers from Phase 1 Lab 04 (the runtime, `containerd` → `runc`).
+
+On macOS, the daemon and all containers run inside a Linux VM. The CLI talks to it over that socket.
 
 ## Reading list (offline)
 

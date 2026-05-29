@@ -27,6 +27,12 @@ Keep the container running in one terminal; open another with `docker exec -it l
 
 ## Reading list (offline-friendly)
 
+The base `ubuntu:22.04` image ships almost no man pages. To make the section 2/7 kernel/syscall pages below actually work, install them first (otherwise you'll get `No manual entry for namespaces in section 7`):
+
+```bash
+apt install -y manpages manpages-dev
+```
+
 - `man bash` — sections on Quoting, Expansion, Pipelines.
 - `man 7 signal` — signals.
 - `man 7 namespaces` — the heart of containers.

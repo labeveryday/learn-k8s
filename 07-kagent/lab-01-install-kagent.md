@@ -67,11 +67,20 @@ the vocabulary; the controller is the thing that acts on it. Install the vocabul
 
 ```bash
 helm upgrade -i kagent-crds oci://ghcr.io/kagent-dev/kagent/helm/kagent-crds \
-  --namespace kagent --create-namespace
+  --namespace kagent --create-namespace   # CHART 1: just the CRDs (the API vocabulary)
 
 helm upgrade -i kagent oci://ghcr.io/kagent-dev/kagent/helm/kagent \
-  --namespace kagent
+  --namespace kagent                       # CHART 2: the controller that acts on them
 ```
+
+- `upgrade -i` (= `--install`) is the idempotent verb: install if absent, upgrade if present —
+  so re-running these is safe, same declarative spirit as `kubectl apply`.
+- `oci://ghcr.io/...` pulls the chart straight from a container registry (GitHub Container
+  Registry) instead of a classic `helm repo add` URL — kagent ships its charts as OCI
+  artifacts, so there's no repo to add first.
+- `--create-namespace` makes the `kagent` namespace on the *first* chart; the second reuses it.
+  Order is load-bearing: install CRDs **before** the controller, or the controller crash-loops
+  looking for `Agent`/`ModelConfig` types that don't exist yet.
 
 Verify the controller is up:
 
@@ -79,9 +88,33 @@ Verify the controller is up:
 kubectl -n kagent get pods
 ```
 
-**What to look for:** a controller Pod (the kagent deployment) in `Running`, `1/1` ready.
-The second chart also created something you'll use in lab-03 without authoring it — a
-built-in MCP tool server. You'll meet it in step 3.
+**What you should see:** a controller Pod (the kagent deployment) in `Running`, `1/1` ready —
+that `1/1` means its single container passed its readiness probe, so the reconcile loop is
+live and watching. The second chart also created something you'll use in lab-03 without
+authoring it — a built-in MCP tool server. You'll meet it in step 3.
+
+### Install the `kagent` CLI (you'll need it to talk to agents in lab-02/03)
+
+Helm installed the *controller*; it did not give you a command-line client. Install the CLI
+now — it's how you'll invoke agents from labs 02–03. Use the official installer (we read
+kagent.dev rather than blogs, since kagent moves fast):
+
+```bash
+curl -sfL https://kagent.dev/install.sh | bash    # installs the `kagent` CLI
+kagent version                                     # confirm it's on your PATH
+```
+
+- `curl -sfL`: `-s` silent (no progress bar), `-f` fail on HTTP errors (so a 404 doesn't pipe
+  an error page into `bash`), `-L` follow redirects. Piping a remote script to `bash` runs
+  unreviewed code — fine here because it's the project's own published installer; read it first
+  (`curl -sfL https://kagent.dev/install.sh | less`) if you're cautious.
+
+**What you should see:** `kagent version` prints a version string. If it's "command not found,"
+the installer dropped the binary somewhere not on your `PATH` — its output tells you where.
+
+Don't have it / can't install it? Every `kagent invoke` in this phase has a `curl`
+fallback against the port-forwarded API — see lab-02 step 3. The CLI is the convenient
+path, not the only one.
 
 ## 2. Read the new kinds — the vocabulary, not behavior
 
@@ -111,8 +144,12 @@ kagent moves fast and `explain` is always in sync with what you actually install
 (Kelsey's rule from Phase 05):
 
 ```bash
-kubectl explain agent.spec
+kubectl explain agent.spec        # the live schema, generated from the CRD you just installed
 ```
+
+- `explain` reads the OpenAPI schema embedded in the installed CRD, so it can never drift from
+  your cluster the way a blog post can. Append `.declarative` to drill in
+  (`kubectl explain agent.spec.declarative`) and see exactly which sub-fields the controller honors.
 
 **What to look for:** `spec.type` (this is `Declarative` for a controller-run agent),
 `spec.declarative` (where `modelConfig`, `systemMessage`, and `tools` live), and
@@ -127,22 +164,38 @@ declaring an `Agent` that points at a `ModelConfig` that doesn't exist yet:
 
 ```bash
 kubectl apply -n kagent -f - <<'EOF'
-apiVersion: kagent.dev/v1alpha2
+apiVersion: kagent.dev/v1alpha2     # the kind kagent's CRD chart added — NOT a built-in K8s type
 kind: Agent
 metadata:
   name: ghost
-  namespace: kagent
+  namespace: kagent                 # same namespace as the controller — and where its `vllm` ModelConfig will live (lab-02)
 spec:
-  description: "An agent with no model — should never become ready."
-  type: Declarative
-  declarative:
-    modelConfig: does-not-exist
-    systemMessage: "I will never run."
+  description: "An agent with no model — should never become ready."  # human label; surfaces in the kagent UI/CLI
+  type: Declarative                 # controller-RUN agent (vs. a BYO/remote agent); selects the `declarative:` block below
+  declarative:                       # everything the runtime needs lives here for a Declarative agent
+    modelConfig: does-not-exist     # by NAME, a ModelConfig in this namespace — and it doesn't exist (the whole point)
+    systemMessage: "I will never run."  # the agent's system prompt — fine on its own; useless without a model to send it to
 EOF
 
 kubectl get agent ghost -n kagent
 kubectl describe agent ghost -n kagent
 ```
+
+Dissecting the two fields that decide this Agent's fate:
+
+- **`type: Declarative`** is the switch. It tells the controller "*you* run this" — and that's
+  what makes `modelConfig` mandatory: a controller-run agent needs a model to run *with*.
+  (`explain agent.spec.type` lists the other values; Declarative is what every agent in this
+  phase uses.)
+- **`modelConfig: does-not-exist`** is a *reference by name*, not an inline config — the same
+  late-binding you saw with Services selecting Pods by label. The reference is structurally
+  valid YAML, so the API server stores it. Whether the named `ModelConfig` actually *exists* is
+  not checked at admission; it's checked by the **controller**, later, in the reconcile loop —
+  which is exactly why a valid-looking Agent can still never run.
+
+Beginner gotcha: nothing here is malformed, so `apply` succeeds and prints `agent.kagent.dev/ghost created`.
+"It applied" tells you the *shape* was accepted, never that the thing will *run*. The next two
+commands are where the truth lives.
 
 **Read the status, don't skim it.** Under `status.conditions` the Agent reports itself
 **not ready**, with a reason pointing at the missing/unresolved `ModelConfig`. The object
@@ -165,7 +218,7 @@ kubectl delete agent ghost -n kagent
 The kagent controller **watches** `Agent` objects in the API server. When you `apply` one
 whose dependencies resolve (a real `ModelConfig`, valid tools), the reconcile loop turns
 that declarative spec into a **running workload**: a Pod running the kagent agent runtime
-(`kagent-adk`, the engine that actually executes the LLM loop — read prompt, call model,
+(`kagent-adk` — ADK = Agent Development Kit, the engine that actually executes the LLM loop — read prompt, call model,
 maybe call a tool, repeat). The controller also proxies invocation traffic to that Pod, so
 you talk to the agent through kagent rather than reaching the Pod directly.
 

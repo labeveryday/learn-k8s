@@ -72,10 +72,10 @@ Expose the in-cluster model to your laptop, where the Strands process runs:
 kubectl port-forward svc/vllm 8000:8000 &     # vLLM's OpenAI API now on localhost:8000
 ```
 
-Now aim the template at it. Open `agents/src/agent.py` and replace the `MODEL = …` line
-(the file's designated "Model selection" customization point) with a direct `OpenAIModel`
-— your `models.py` helper `openai_model()` is the *one* provider that doesn't expose
-`base_url`, so construct it directly (or add a `vllm_model()` helper mirroring the others):
+Now aim the template at it. This is the phase's first *code* edit — every prior lab was
+`kubectl apply`; here you change two lines of Python. Open `agents/src/agent.py` and
+replace the `MODEL = …` line (the file's designated "Model selection" customization point)
+with exactly this block:
 
 ```python
 from strands.models.openai import OpenAIModel
@@ -91,6 +91,38 @@ MODEL = OpenAIModel(
 )
 ```
 
+Why construct `OpenAIModel` inline here? The helper in `agents/src/models/models.py` has an
+`openai_model()`, but it's the *one* provider that doesn't expose `base_url` — so the direct
+constructor is the shortest correct path. (Optional, later: add a `vllm_model()` helper there
+mirroring the others, so this lives in `models.py` like every other provider. Not needed to
+finish this step.)
+
+**See the symmetry — the kagent half is the same `base_url`.** Your in-cluster agents from
+labs 01–03 point at the *exact same* vLLM through `ModelConfig` (`manifests/modelconfig-vllm.yaml`,
+dissected field-by-field in lab-02). The load-bearing slice, next to the Python above:
+
+```yaml
+apiVersion: kagent.dev/v1alpha2         # kagent CRD group (not core/apps) — installed by Helm in lab-01
+kind: ModelConfig
+metadata:
+  name: vllm
+  namespace: kagent
+spec:
+  provider: OpenAI                       # selects the PROTOCOL — kagent formats requests OpenAI-style
+  model: "Qwen/Qwen2.5-0.5B-Instruct"    # == model_id in the Strands block above
+  apiKeySecret: vllm-api-key             # kagent requires a key field even when vLLM ignores it
+  apiKeySecretKey: api-key               #   (mirrors api_key:"EMPTY" on the Strands side)
+  openAI:
+    baseUrl: "http://vllm.default.svc.cluster.local:8000/v1"  # == client_args.base_url, but in-CLUSTER DNS
+```
+
+`client_args["base_url"]` (Strands) and `spec.openAI.baseUrl` (kagent) are *the same field
+under two names*. The only real difference is the host: the Strands process runs on your laptop,
+so it dials `localhost:8000` through the port-forward; the kagent Pod runs *inside* the cluster,
+so it dials the Service's DNS name `vllm.default.svc.cluster.local:8000` directly (no port-forward —
+Phase 03's CoreDNS + ClusterIP). Same endpoint, same protocol, two vantage points. That's the
+bridge made literal — "self-hosted" really is just a base URL on both sides.
+
 Run it and ask something:
 
 ```bash
@@ -103,18 +135,48 @@ python src/agent.py
 network. The exact same Strands framework, Hub, and hooks you'd use against Anthropic are
 now driving *your* model. That's the bridge: your open-source agent, your self-hosted LLM.
 
-> **Platform tie-in (the real payoff).** Point `base_url` at your Phase 06 **gateway**
-> (`http://localhost:8080/v1` after `kubectl -n kgateway-system port-forward svc/http
-> 8080:80`) instead of vLLM directly, and your Strands agent inherits the gateway's token
-> limits and prompt guards *for free* — it doesn't even know it's behind one. The route
-> keys on `Host: llm.example.com`, so set it via `client_args["default_headers"] = {"Host":
+> **Platform tie-in — OPTIONAL (the real payoff).** Point `base_url` at your Phase 06
+> **gateway** (`http://localhost:8080/v1` after `kubectl -n kgateway-system port-forward
+> svc/http 8080:80`) instead of vLLM directly, and your Strands agent inherits the gateway's
+> token limits and prompt guards *for free* — it doesn't even know it's behind one. The
+> route keys on `Host: llm.example.com` (that host and route come from **Phase 06 lab-02** —
+> look back there), so set it via `client_args["default_headers"] = {"Host":
 > "llm.example.com"}`. Your framework is now a *governed* client of your platform.
 
 ## 2. MCP is the same protocol on both sides
 
-Open `agents/examples/mcp_docs_agent.py`. It builds an `MCPClient`, calls
-`list_tools_sync()`, and hands those tools to the `Agent` — exactly the role
-`RemoteMCPServer` + `toolNames` played for kagent in lab-03. Run it to feel the symmetry:
+Open `agents/examples/mcp_docs_agent.py`. It builds an `MCPClient` over stdio, calls
+`list_tools_sync()` to discover the server's tools, and hands them to the `Agent`:
+
+```python
+from mcp import stdio_client, StdioServerParameters
+from strands.tools.mcp import MCPClient
+
+strands_mcp_client = MCPClient(lambda: stdio_client(...))   # connect to an EXTERNAL MCP server
+mcp_tools = strands_mcp_client.list_tools_sync()            # discover the tools it exposes
+agent = Agent(model=MODEL, tools=[...] + mcp_tools)         # hand the discovered tools to the loop
+```
+
+That `MCPClient → list_tools_sync() → Agent(tools=…)` flow is *exactly* the role
+`RemoteMCPServer` + `toolNames` played for kagent in lab-03. Side by side, the kagent slice
+(`manifests/agent-with-tools.yaml`, dissected in lab-03):
+
+```yaml
+    tools:
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev          # the three fields below NAME the server to call (a structured ref,
+          kind: RemoteMCPServer          #   not an inline tool) — == pointing MCPClient at a stdio_client
+          name: kagent-tool-server       # the built-in server Helm created in lab-01
+          toolNames:                      # the ALLOW-LIST — == choosing which list_tools_sync() tools
+            - list_pods                   #   you pass into Agent(tools=…), but enforced by the controller
+            - get_pod
+            - list_events
+```
+
+Strands *discovers* tools at runtime and you choose which to pass in code; kagent *declares*
+the allow-list in YAML and the controller enforces it. Same protocol (MCP), same decoupling —
+the tool server is external to the agent in both. Run the Strands side to feel it:
 
 ```bash
 python examples/mcp_docs_agent.py

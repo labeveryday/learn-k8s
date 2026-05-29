@@ -135,7 +135,9 @@ kubectl port-forward svc/vllm 8000:8000 &        # chat model for generation
 ```
 
 In `agents/src/agent.py`, point the model at your vLLM (the Phase 07 lab-04 bridge) and add
-the tool:
+the tool. Here we point straight at vLLM on `8000` to keep Part A simple; the optional
+**Platform tie-in** below shows how to route through the Phase 06 gateway instead (and inherit
+the `rag-route` token budget you built in lab-02):
 
 ```python
 from strands import Agent
@@ -163,11 +165,17 @@ cd agents && python src/agent.py
 # > What is 17 times 3?                      (should NOT retrieve → answers directly)
 ```
 
-**What to look for:** for the Acme question, the agent calls `retrieve` (you'll see the tool
-invocation in the loop / your `LoggingHook`) and the answer contains `as-07`. For the math
-question, **no tool call** — the agent answered from its own ability. *That* is the difference
-from lab-02: the agent **decided**. Retrieval is now conditional, driven by the question, not
-by your control flow.
+**What to look for:** for the Acme question, the agent calls `retrieve` — Strands prints a
+tool-use line in the loop (your `LoggingHook` shows it too), something like:
+
+```
+[tool] retrieve(query='Osaka region code', top_k=3)
+```
+
+and the answer contains `as-07`. For the math question, **no such line** — the agent answered
+from its own ability. That presence-vs-absence of the `retrieve` line is how you confirm the
+decision. *That* is the difference from lab-02: the agent **decided**. Retrieval is now
+conditional, driven by the question, not by your control flow.
 
 > **Platform tie-in:** point the model `base_url` at your Phase 06 gateway
 > (`http://localhost:8080/v1` + `default_headers={"Host":"rag.example.com"}`) instead of vLLM
@@ -183,16 +191,157 @@ built-in Kubernetes tools.
 
 ### B1. Deploy the retrieval MCP server
 
-```bash
-kubectl apply -f manifests/retrieval-mcp-server.yaml
-kubectl rollout status deploy/retrieval-mcp --timeout=120s
+`manifests/retrieval-mcp-server.yaml` is three objects in one file: a **ConfigMap** holding the
+server's Python source, a **Deployment** that runs it, and a **Service** that fronts it. The
+ConfigMap keeps the lab to one `kubectl apply` and lets you *read* the MCP wire format; in a
+real build you'd bake the code into an image. The Python is a **teaching stub** — it hand-rolls
+the three MCP JSON-RPC methods (`initialize` / `tools/list` / `tools/call`) over plain HTTP POST
+so you can see exactly what an MCP server answers. The retrieval logic inside it is the lab-02
+pipeline verbatim: embed the query, search Qdrant, return the chunk texts.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: retrieval-mcp-src        # mounted into the pod at /src; the Deployment runs /src/server.py
+  namespace: default
+data:
+  server.py: |
+    import json, os, urllib.request
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    EMBED_URL = os.environ["EMBED_URL"]        # from the Deployment env below; fail-fast if unset
+    EMBED_MODEL = os.environ["EMBED_MODEL"]
+    QDRANT_URL = os.environ["QDRANT_URL"]
+    COLLECTION = os.environ.get("COLLECTION", "runbook")
+
+    def _http(method, url, body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as r:
+            return json.loads(r.read() or "{}")
+
+    def retrieve(query, top_k=3):              # the SAME embed -> top-k search as Part A's @tool
+        vec = _http("POST", EMBED_URL, {"input": query, "model": EMBED_MODEL})["data"][0]["embedding"]
+        hits = _http("POST", f"{QDRANT_URL}/collections/{COLLECTION}/points/search",
+                     {"vector": vec, "limit": top_k, "with_payload": True})["result"]
+        return [h["payload"]["text"] for h in hits]
+
+    TOOLS = [{
+        "name": "retrieve",                    # THIS is the tool name kagent discovers + allow-lists in B2
+        "description": "Search the Acme Cloud runbook for chunks relevant to a query.",
+        "inputSchema": {"type": "object",      # the model reads this schema to know the args
+                        "properties": {"query": {"type": "string"},
+                                       "top_k": {"type": "integer", "default": 3}},
+                        "required": ["query"]},
+    }]
+
+    class H(BaseHTTPRequestHandler):
+        def _send(self, obj):
+            b = json.dumps(obj).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+        def do_POST(self):                     # the three MCP methods, hand-rolled so you can read them
+            n = int(self.headers.get("Content-Length", 0))
+            msg = json.loads(self.rfile.read(n) or "{}")
+            mid, method = msg.get("id"), msg.get("method")
+            if method == "initialize":         # handshake: protocol version + capabilities
+                self._send({"jsonrpc": "2.0", "id": mid, "result": {
+                    "protocolVersion": "2024-11-05",
+                    "serverInfo": {"name": "retrieval", "version": "0.1.0"},
+                    "capabilities": {"tools": {}}}})
+            elif method == "tools/list":       # discovery: kagent calls this to learn `retrieve` exists
+                self._send({"jsonrpc": "2.0", "id": mid, "result": {"tools": TOOLS}})
+            elif method == "tools/call":       # execution: the agent's tool-use lands here
+                args = msg["params"]["arguments"]
+                texts = retrieve(args["query"], int(args.get("top_k", 3)))
+                self._send({"jsonrpc": "2.0", "id": mid, "result": {
+                    "content": [{"type": "text", "text": "\n\n---\n\n".join(texts)}]}})
+            else:
+                self._send({"jsonrpc": "2.0", "id": mid, "result": {}})
+        def log_message(self, *a):  # quiet
+            pass
+
+    ThreadingHTTPServer(("0.0.0.0", 9000), H).serve_forever()   # listens on :9000 — B2 must point here
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retrieval-mcp
+  namespace: default               # NOTE: default ns — the Agent lives in `kagent`, so B2 uses a cross-ns DNS name
+  labels:
+    app: retrieval-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: retrieval-mcp           # must equal template.labels below (the lab-03 selector trap)
+  template:
+    metadata:
+      labels:
+        app: retrieval-mcp
+    spec:
+      containers:
+        - name: mcp
+          image: python:3.12-slim  # no app deps — the stub is pure stdlib; just needs a Python
+          command: ["python", "/src/server.py"]   # runs the ConfigMap file mounted at /src
+          env:                     # these wire the tool to YOUR platform by CoreDNS name (no IPs)
+            - name: EMBED_URL
+              value: "http://vllm-embed.default.svc.cluster.local:8000/v1/embeddings"
+            - name: EMBED_MODEL
+              value: "BAAI/bge-small-en-v1.5"        # must match the model lab-01 serves on vllm-embed
+            - name: QDRANT_URL
+              value: "http://qdrant.vectordb.svc.cluster.local:6333"   # Qdrant is in the vectordb ns
+            - name: COLLECTION
+              value: "runbook"     # the lab-01/02 collection (4 points)
+          ports:
+            - containerPort: 9000
+          volumeMounts:
+            - { name: src, mountPath: /src }         # ConfigMap -> /src, so /src/server.py exists
+      volumes:
+        - name: src
+          configMap:
+            name: retrieval-mcp-src                  # the ConfigMap above, by name
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: retrieval-mcp
+  namespace: default
+  labels:
+    app: retrieval-mcp
+spec:
+  selector:
+    app: retrieval-mcp             # routes to the Deployment's pods by this label
+  ports:
+    - name: mcp
+      port: 9000                   # the Service port the RemoteMCPServer URL in B2 dials
+      targetPort: 9000
 ```
 
-Open the manifest: a tiny stdlib MCP server (in a ConfigMap) exposing one tool, `retrieve`,
-that runs the *same* embed→Qdrant-search as Part A — reachable as an in-cluster Service at
-`:9000/mcp`, talking to `vllm-embed` and `qdrant` by CoreDNS name. It's a **teaching stub**
-of the MCP message shape; the manifest header shows the `mcp`-SDK FastMCP path for a server
-kagent discovers reliably in production.
+Two gotchas worth pre-loading: **(1)** the Deployment is in `default` but the kagent `Agent` is
+in `kagent`, so B2's `RemoteMCPServer` URL is a *cross-namespace* DNS name
+(`retrieval-mcp.default.svc.cluster.local`) — drop the `.default` and discovery resolves to the
+wrong namespace. **(2)** the tool name the model uses is `retrieve` (the `TOOLS[0].name` in the
+ConfigMap), but the *server* object you register in B2 is named `retrieval` — two different
+names, see B2.
+
+```bash
+kubectl apply -f manifests/retrieval-mcp-server.yaml   # creates the ConfigMap + Deployment + Service
+kubectl rollout status deploy/retrieval-mcp --timeout=120s   # blocks until the pod is Ready
+```
+
+This is a **teaching stub** of the MCP message shape, not a spec-complete transport — it lacks
+SSE event framing and `Mcp-Session-Id` headers, so a strict kagent build may not finish tool
+discovery against it (the manifest header is explicit about this). For a server kagent discovers
+reliably in production, bake a real one into an image using the `mcp` SDK's **FastMCP**
+(`from mcp.server.fastmcp import FastMCP`; `@mcp.tool()`; `mcp.run(transport="streamable-http")`).
+FastMCP is the helper in the official MCP Python SDK for building MCP servers; we use the stdlib
+stub here to stay dependency-free.
 
 **What to look for:** the pod goes Ready quickly (no model to load — it just proxies to the two
 services). If it crashloops, `kubectl logs deploy/retrieval-mcp` shows the Python traceback —
@@ -200,19 +349,60 @@ read which dependency or env var failed.
 
 ### B2. Register it and grant the agent the tool
 
-```bash
-kubectl apply -f manifests/rag-agent.yaml
-kubectl describe remotemcpserver retrieval -n kagent     # status should list the discovered `retrieve` tool
-kubectl describe agent rag-agent -n kagent
+`manifests/rag-agent.yaml` is two CRDs — both in the `kagent` namespace, both `kagent.dev/v1alpha2`
+(the exact apiVersion from Phase 07). The first tells kagent *where your tool lives*; the second
+is the agent that *may call it*:
+
+```yaml
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer          # registers an external MCP server as a discoverable tool catalog
+metadata:
+  name: retrieval              # the SERVER object's name (not the tool's) — describe targets this
+  namespace: kagent
+spec:
+  description: "Retrieval over the Acme Cloud runbook vector store (embed + Qdrant search)."
+  url: "http://retrieval-mcp.default.svc.cluster.local:9000/mcp"   # cross-ns DNS to B1's Service + /mcp path
+  protocol: STREAMABLE_HTTP    # how kagent talks to it; the stub answers JSON-RPC over this
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: rag-agent
+  namespace: kagent
+spec:
+  description: "Answers questions about Acme Cloud, retrieving from the runbook when needed."
+  type: Declarative            # config-only agent — no custom code, defined entirely by this spec
+  declarative:
+    modelConfig: vllm          # the ModelConfig from Phase 07 (07-kagent/manifests/modelconfig-vllm.yaml)
+    systemMessage: |           # THE decision steering — tells the model when to reach for the tool
+      You answer questions about Acme Cloud. You have a `retrieve` tool that searches the
+      Acme Cloud runbook. Use it whenever the question is about Acme-specific facts
+      (region codes, limits, quirks). If retrieved chunks do not contain the answer, say
+      you don't know rather than guessing. For general knowledge, answer directly without
+      retrieving.
+    tools:
+      - type: McpServer        # this tool comes from an MCP server (vs a built-in kagent tool)
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: retrieval      # points at the RemoteMCPServer object above (the server name)
+          toolNames:           # the ALLOW-LIST: only these tools are exposed to the model
+            - retrieve         # the TOOL name (TOOLS[0].name from B1) — not the server name
 ```
 
-`rag-agent.yaml` does two things (read both):
+Read the two-name distinction carefully, because it's the #1 trip-up here: the **server** object
+is `retrieval`; the **tool** it exposes is `retrieve`. The `describe` command below targets the
+server (`retrieval`); the `toolNames` allow-list names the tool (`retrieve`). If `toolNames` lists
+a name the server doesn't actually expose, kagent won't grant a phantom tool — it'll say so in the
+Agent's conditions (the Phase 07 lab-03 lesson). The `systemMessage` is the same decision steering
+as Part A's docstring + system prompt: it's what makes the agent *decide* to retrieve, instead of
+always retrieving.
 
-- a `RemoteMCPServer` named `retrieve` (well, `retrieval`) pointing at
-  `http://retrieval-mcp.default.svc.cluster.local:9000/mcp` over `STREAMABLE_HTTP` — kagent
-  *discovers* its tools, same as the built-in server in Phase 07 lab-03.
-- an `Agent` `rag-agent` whose `toolNames` allow-lists exactly `retrieve`. Its system prompt
-  tells it to retrieve for Acme facts and abstain when the chunks don't answer.
+```bash
+kubectl apply -f manifests/rag-agent.yaml                # creates the RemoteMCPServer + Agent
+kubectl describe remotemcpserver retrieval -n kagent     # status should list the discovered `retrieve` tool
+kubectl describe agent rag-agent -n kagent               # conditions should show a healthy reconcile + the granted tool
+```
 
 **What to look for:** under the `RemoteMCPServer` status, a discovered tool named `retrieve` —
 you didn't type that, kagent asked the server. Under the `Agent` conditions, a healthy reconcile
@@ -229,9 +419,19 @@ kill %1 2>/dev/null
 ```
 
 **What to look for:** a log line showing the agent invoking `retrieve` (possibly twice for the
-two-part question), then an answer with **`as-07`** and **`10 TiB`** — both from *your* runbook,
-fetched by *your* in-cluster tool, by a cluster-managed agent with no laptop process. The MCP
-indirection from Phase 07 lab-03 is identical; only the tool changed.
+two-part question) — roughly:
+
+```
+... calling tool retrieve args={"query":"Osaka region code","top_k":3} ...
+```
+
+then an answer with **`as-07`** and **`10 TiB`** — both from *your* runbook, fetched by *your*
+in-cluster tool, by a cluster-managed agent with no laptop process. The MCP indirection from
+Phase 07 lab-03 is identical; only the tool changed.
+
+If the grep comes back **empty**, that's either the agent deciding not to call the tool *or* a
+broken wiring — distinguish them with `kubectl describe agent rag-agent -n kagent` and read the
+conditions (an unhealthy reconcile or an ungranted tool shows up there).
 
 ## Break it, then read the error (Kelsey lens): always-retrieve vs decide-to-retrieve
 

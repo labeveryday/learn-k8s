@@ -41,7 +41,9 @@ kube-proxy — is the Phase 03 machinery, unchanged.
   concept). Phases 05–06 make the "Spin in front of the gateway/LLM" demo land, but the
   core labs stand alone.
 - A toolchain for one language target (Rust or TinyGo or JS/TS via the Spin SDK).
-- `k3d`, `kubectl`, `helm`, and Docker running (lab-02 builds a k3d cluster).
+- `kubectl`, `helm`, and Docker running, plus **`k3d`** — a new tool this phase introduces
+  (00-prep installed `kind`; this phase needs k3d for a node image with the Spin shim baked
+  in). lab-02 Step 0 installs it and builds the cluster.
 
 ## Objectives
 

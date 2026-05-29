@@ -96,6 +96,9 @@ kgateway ships as **OCI Helm charts** in two pieces: its *own* CRDs (policy reso
 that extend the standard Gateway API), then the controller. Install CRDs first so the
 controller's schema dependencies exist when it starts.
 
+`helm upgrade -i` is `helm install` (from 03/lab-11) with the `-i`/`--install` flag:
+install if absent, upgrade if present — idempotent, so re-running these is safe.
+
 ```bash
 # Pin the version — check kgateway.dev / GitHub releases for current.
 KGW=v2.3.1
@@ -130,19 +133,108 @@ half of lab-01's ghost.
 ## 2. Deploy a demo app
 
 `httpbin` (the `go-httpbin` image) echoes the incoming request back as JSON — so when
-routing works, you can *see* the exact request the proxy forwarded.
+routing works, you can *see* the exact request the proxy forwarded. Nothing here is new:
+it's a plain Phase 03 Deployment + Service (`manifests/httpbin.yaml`):
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbin
+  labels: { app: httpbin }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: httpbin }      # owns Pods carrying app=httpbin
+  template:
+    metadata:
+      labels: { app: httpbin }         # MUST equal the selector above (lab-03 trap)
+    spec:
+      containers:
+      - name: httpbin
+        image: mccutchen/go-httpbin:v2.15.0   # pinned; this image echoes the request as JSON
+        ports:
+        - containerPort: 8080          # the app listens on 8080 INSIDE the pod
+        readinessProbe:
+          httpGet: { path: /get, port: 8080 }  # not "Ready" until /get answers → no endpoint until then
+          initialDelaySeconds: 2
+        resources:
+          requests: { cpu: 50m, memory: 64Mi }
+          limits:   { cpu: 200m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbin                        # this NAME is what the HTTPRoute's backendRef points at
+spec:
+  selector: { app: httpbin }           # routes to Pods with app=httpbin (the Deployment's Pods)
+  ports:
+  - name: http
+    port: 8000                         # the Service port — backendRef will say port: 8000
+    targetPort: 8080                   # ...and forwards to the pod's 8080. The 8000≠8080 gap trips people up.
+```
 
 ```bash
 kubectl apply -f manifests/httpbin.yaml
-kubectl rollout status deploy/httpbin
+kubectl rollout status deploy/httpbin   # blocks until the readinessProbe passes and the Pod is Ready
 ```
 
-**What to look for:** the manifest also creates a `Service httpbin` on port `8000`
-(targeting container `8080`). That Service is the `backendRef` your HTTPRoute will name
-— the bridge from the new top floor down to the Phase 03 ClusterIP machinery. Confirm
-it has an endpoint: `kubectl get endpoints httpbin` should list a Pod IP, not be empty.
+**What to look for:** the `Service httpbin` on port `8000` (targeting container `8080`)
+is the `backendRef` your HTTPRoute will name — the bridge from the new top floor down to
+the Phase 03 ClusterIP machinery. Confirm it has an endpoint: `kubectl get endpoints
+httpbin` should list a Pod IP, not be empty. **Gotcha:** an empty endpoint list almost
+always means the readinessProbe hasn't passed — a Service only adds *Ready* Pods to its
+endpoints, so the route would resolve but have nowhere to send traffic.
 
 ## 3. Create a Gateway + HTTPRoute
+
+Two objects, two roles (the lab-01 separation made concrete). First the **Gateway** —
+the platform-owned front door (`manifests/kgateway-gateway.yaml`):
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1   # standard Gateway API group/version (Gateway API v1.5.1)
+kind: Gateway
+metadata:
+  name: http                       # kgateway names the proxy Deployment/Service after THIS
+  namespace: kgateway-system
+spec:
+  gatewayClassName: kgateway       # the magic word: hands this Gateway to the kgateway controller
+  listeners:
+  - name: http
+    port: 80                       # the proxy listens on :80 (you port-forward to this in step 4)
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: All                  # HTTPRoutes in ANY namespace may attach — wide open for the lab
+```
+
+Then the **HTTPRoute** — the app-developer-owned routing rule
+(`manifests/httpbin-route.yaml`):
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: httpbin
+spec:
+  parentRefs:
+  - name: http                     # attach to the Gateway above BY NAME...
+    namespace: kgateway-system     # ...which lives in another namespace, so this is required
+  hostnames:
+  - httpbin.example.com            # Envoy only matches requests carrying THIS Host header
+  rules:
+  - matches:
+    - path: { type: PathPrefix, value: / }   # every path (prefix "/") matches this rule
+    backendRefs:
+    - name: httpbin                # the Service from step 2...
+      port: 8000                   # ...on its Service port 8000 (NOT the pod's 8080)
+```
+
+Two beginner gotchas live in this pair: the HTTPRoute's `parentRefs.namespace` **must**
+name the Gateway's namespace (it's cross-namespace, so omitting it looks for `http` in
+the route's own namespace and silently never attaches); and `backendRefs.port` is the
+**Service** port (`8000`), not the container port (`8080`) — getting that wrong gives you
+a route that resolves but sends traffic to a closed port.
 
 ```bash
 kubectl apply -f manifests/kgateway-gateway.yaml      # Gateway "http" in kgateway-system
@@ -193,6 +285,12 @@ kubectl -n kgateway-system port-forward svc/http 8080:80 &
 curl -s -H "Host: httpbin.example.com" http://localhost:8080/get | head -20
 ```
 
+The `&` backgrounds port-forward so you keep your prompt; it must stay running for steps
+4-6 (`8080:80` maps `localhost:8080` → the proxy service's `:80`). Stop it when done with
+`fg` then Ctrl-C, or `kill %1` / `pkill -f port-forward` — re-running it while it's still
+up fails with "address already in use." `/get` is one of go-httpbin's built-in endpoints
+that returns the request back as JSON.
+
 **What to look for:** httpbin echoes your request as JSON. The `Host` header matters —
 the HTTPRoute has `hostnames: [httpbin.example.com]`, so Envoy's route table only
 matches requests carrying that host. Drop the header and you'll get a `404` from Envoy,
@@ -207,7 +305,50 @@ programmed by an HTTPRoute, served by your pod.** Floor 1 works.
 ## 5. Traffic splitting (the kgateway payoff)
 
 Deploy a v2 of the app and send 80/20 of traffic to it — no code change, just weights
-on two `backendRefs`:
+on two `backendRefs`. `httpbin-v2.yaml` is a near-clone of step 2's manifest (same image,
+`app: httpbin-v2` labels, its own `Service httpbin-v2:8000`) — a second backend to split
+*toward*. The interesting object is the **split route** (`manifests/httpbin-route-split.yaml`),
+which replaces the single-backend route from step 3:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: httpbin                    # SAME name as step 3 — apply overwrites the old single-backend route
+spec:
+  parentRefs:
+  - name: http
+    namespace: kgateway-system
+  hostnames:
+  - httpbin.example.com
+  rules:
+  - matches:
+    - path: { type: PathPrefix, value: / }
+    backendRefs:
+    - name: httpbin
+      port: 8000
+      weight: 80                   # ~80% of requests go to v1...
+      filters:
+      - type: RequestHeaderModifier # ...and get X-Version: v1 stamped on BEFORE forwarding
+        requestHeaderModifier:
+          set:
+          - name: X-Version
+            value: v1
+    - name: httpbin-v2
+      port: 8000
+      weight: 20                   # ~20% to v2, with X-Version: v2
+      filters:
+      - type: RequestHeaderModifier
+        requestHeaderModifier:
+          set:
+          - name: X-Version
+            value: v2
+```
+
+The `weight` numbers are *relative*, not percentages — `80` and `20` happen to sum to 100,
+but `4`/`1` would split identically. The per-backend `RequestHeaderModifier` filter is what
+lets you *see* which side won each request: it sets the `X-Version` header before Envoy
+forwards, and go-httpbin echoes it back.
 
 ```bash
 kubectl apply -f manifests/httpbin-v2.yaml
@@ -224,7 +365,8 @@ filter to each backendRef that stamps `X-Version: v1` or `v2` onto the request *
 forwarding. go-httpbin echoes request headers in its `/get` JSON, and because Go models
 headers as `map[string][]string`, the field comes back as an *array*:
 `"X-Version":["v1"]`. That's why the jq path is `.headers["X-Version"][0]` — read the
-first element. No `jq`? Match the array directly:
+first element. (`jq` is a command-line JSON parser, installed in 00-prep; here it pulls
+one field out of httpbin's JSON.) No `jq`? Match the array directly:
 `grep -o '"X-Version":\[[^]]*\]'`.
 
 **What to look for:** roughly 8 of 10 lines say `v1`, 2 say `v2`. That ratio *is* Envoy
@@ -244,6 +386,10 @@ kubectl patch httproute httpbin --type=json \
 
 kubectl describe httproute httpbin
 ```
+
+This is a **JSON Patch**: `op: replace` overwrites the value at `path`, where the path
+walks the object like a file path and each `0` is the first array element (rule 0,
+backendRef 0). It just renames the backend to a Service that doesn't exist.
 
 **Read the condition.** The route's parent status flips to `ResolvedRefs=False` with a
 reason like `BackendNotFound`. Note what did *not* change: the Gateway is still
@@ -276,7 +422,10 @@ If you want `LoadBalancer` to get an IP instead of port-forwarding:
 
 ```bash
 # separate terminal, leave it running
-go install sigs.k8s.io/cloud-provider-kind@latest   # or download a release binary
+# Easiest: grab a prebuilt binary from the cloud-provider-kind GitHub releases.
+# Or, if you have the Go toolchain (NOT part of 00-prep), build it — go install
+# drops the binary in ~/go/bin:
+go install sigs.k8s.io/cloud-provider-kind@latest
 sudo ~/go/bin/cloud-provider-kind
 kubectl -n kgateway-system get svc -w   # the gateway svc should get an EXTERNAL-IP
 ```
@@ -307,6 +456,7 @@ You can now:
 ## Cleanup (keep CRDs)
 
 ```bash
+pkill -f port-forward    # stop the step-4 background port-forward
 kubectl delete -f manifests/httpbin-route-split.yaml --ignore-not-found
 kubectl delete -f manifests/httpbin-route.yaml --ignore-not-found
 kubectl delete -f manifests/kgateway-gateway.yaml --ignore-not-found

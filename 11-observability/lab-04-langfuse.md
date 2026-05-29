@@ -9,6 +9,9 @@ Object + Block Storage.
 
 **Time:** ~60 min · **Cost:** 💸 LKE (Block Storage PVCs + Object Storage bucket) — tear down after
 
+> **Requires Phase 09 LKE** (a real cluster + credits): labs 01–03 run on local kind, but
+> this capstone needs LKE's Object + Block Storage. Do it *after* Phase 09 — or skip on kind.
+
 ## The problem (why this exists)
 
 labs 01–03 gave you three answers with three tools: Grafana (is it **up**?), Tempo (why
@@ -51,7 +54,8 @@ worker) and four stateful backends, and this is where Akamai earns its keep:
 ```
 
 ClickHouse is *why v3 exists*: a column store makes "scan millions of LLM calls, group by
-model, sum the cost" fast — the analytics a row store (Postgres) chokes on. That's also why
+model, sum the cost" fast — that scan-and-aggregate workload is **OLAP** (vs **OLTP**, the
+single-record reads/writes Postgres is built for), the analytics a row store chokes on. That's also why
 this is an **LKE** lab: on kind the Object Storage and Block Storage are stubs (the Phase 09
 gap), and the ~16 GiB footprint is contrived. On LKE, **Linode Object Storage** is the S3 blob
 backend and **Block Storage** (the `linode-block-storage` CSI from Phase 09) backs the
@@ -85,49 +89,149 @@ prompt/completion text, and latency. Scores/evals are a layer Langfuse adds *aft
 
 ## 1. Generate the required secrets
 
-Langfuse needs three secrets (and the bundled datastores need passwords):
+Langfuse needs three app secrets (and the bundled datastores need passwords):
 
 ```bash
 kubectl create namespace langfuse
-echo "SALT=$(openssl rand -base64 32)"
-echo "NEXTAUTH_SECRET=$(openssl rand -base64 32)"
-echo "ENCRYPTION_KEY=$(openssl rand -hex 32)"   # MUST be 64 hex chars
+echo "SALT=$(openssl rand -base64 32)"           # hashes API keys at rest
+echo "NEXTAUTH_SECRET=$(openssl rand -base64 32)" # signs the web-UI session/JWT
+echo "ENCRYPTION_KEY=$(openssl rand -hex 32)"     # encrypts stored integration secrets — MUST be 64 hex chars
 ```
 
-Put these (and DB passwords) into `manifests/langfuse-values.yaml`. For real use, source them
-from a `Secret` rather than inline values — the lab inlines them for readability.
+- `ENCRYPTION_KEY` is `-hex 32` (32 bytes → **64 hex chars**), *not* `-base64`. Wrong length is
+  the #1 install failure here: the worker crash-loops on boot with an opaque key-length error.
+- All three are read at startup; rotating `ENCRYPTION_KEY` later orphans every secret it
+  already encrypted, so generate once and keep it.
 
-## 2. Install Langfuse via the official Helm chart
+These three values land in the `langfuse:` block of the Helm values file (next section). For
+real use, source them from a `Secret` rather than inline — the lab inlines them for readability.
+
+## 2. The values file — what each block does
+
+The chart is one `helm install`, but the *values file* is where all the architecture
+decisions live: which of the six components run in-cluster, where their data lands, and how
+the blob store is swapped to Akamai. Here is the whole `manifests/langfuse-values.yaml`, then
+the fields that carry weight:
+
+```yaml
+langfuse:
+  # the three step-1 secrets — note each is an OBJECT with a `.value`, not a bare string
+  salt:
+    value: "REPLACE_WITH_openssl_rand_base64_32"           # openssl rand -base64 32
+  nextauth:
+    secret:
+      value: "REPLACE_WITH_openssl_rand_base64_32"         # openssl rand -base64 32
+  encryptionKey:
+    value: "REPLACE_WITH_openssl_rand_hex_32"              # openssl rand -hex 32 → 64 hex chars
+  web:
+    replicas: 1            # UI/API tier — light; one replica is fine for a lab
+  worker:
+    replicas: 1            # async ingestion/eval tier — also light
+
+# --- Bundled datastores: keep, but single-node + on Akamai Block Storage -------------
+postgresql:
+  deploy: true            # OLTP store (projects, users) runs IN the cluster
+  auth:
+    password: "REPLACE_pg_password"
+  primary:
+    persistence:
+      enabled: true
+      storageClass: linode-block-storage   # Phase 09 CSI → a real Block Storage volume on LKE
+      size: 10Gi
+
+clickhouse:
+  deploy: true            # OLAP store (traces/observations/scores) — the reason v3 exists
+  auth:
+    password: "REPLACE_ch_password"
+  replicaCount: 1         # default is 3 (HA); one node is all a learning pool can hold
+  clusterEnabled: false   # THE HA lever — replicaCount:1 + clusterEnabled:false = one non-HA node
+  resourcesPreset: small  # default 2xlarge won't schedule on a small node pool
+  persistence:            # Bitnami subchart passthrough — see the gotcha below if the PVC won't Bind
+    enabled: true
+    storageClass: linode-block-storage
+    size: 20Gi            # ClickHouse is disk-heavy even for a lab
+
+redis:                    # bundled Valkey (Redis-compatible) — queue + cache
+  deploy: true
+  auth:
+    password: "REPLACE_redis_password"
+
+# --- Blob store: DISABLE bundled MinIO, use Linode Object Storage (S3-compatible) -----
+s3:
+  deploy: false           # do NOT run the bundled MinIO; point at external Object Storage
+  bucket: "langfuse-events"                        # create this bucket in Object Storage FIRST
+  region: "us-ord-1"                               # your Linode Object Storage region
+  endpoint: "https://us-ord-1.linodeobjects.com"   # the regional S3 endpoint
+  forcePathStyle: true    # Linode Object Storage is S3-compatible; path-style addressing
+  # credentials are OBJECTS with a `.value` — NOT plain strings (same shape as the secrets above)
+  accessKeyId:
+    value: "REPLACE_linode_obj_access_key"
+  secretAccessKey:
+    value: "REPLACE_linode_obj_secret_key"
+```
+
+The three blocks that make this a *cluster-friendly* install — and where beginners slip:
+
+- **`s3.deploy: false`** is the Akamai swap. Left at the default `true`, the chart runs a
+  bundled MinIO Pod (the sixth component, in-cluster). Setting it `false` and filling
+  `bucket/region/endpoint/credentials` repoints the blob store at your **Linode Object
+  Storage** bucket — so **five** components run in-cluster and the blob store is external. The
+  bucket must **already exist**; the chart won't create it.
+- **ClickHouse single-node** is `replicaCount: 1` **and** `clusterEnabled: false` together —
+  one without the other still tries to form/expect a cluster. The chart default is HA
+  (`replicaCount: 3`, `resourcesPreset: 2xlarge`), which simply won't schedule on a learning
+  pool. `resourcesPreset: small` shrinks the request to fit.
+- **Credentials are objects, not strings.** `salt`, `nextauth.secret`, `encryptionKey`,
+  `accessKeyId`, `secretAccessKey` each take a `.value:` subkey (or a `.secretKeyRef` to a real
+  Secret in prod). Writing `salt: "..."` instead of `salt: {value: "..."}` is a silent
+  mis-set the chart ignores — a classic gotcha.
+- **`storageClass: linode-block-storage`** ties the Postgres + ClickHouse PVCs to the Phase 09
+  CSI driver, so each `persistence` block provisions a *real* Akamai Block Storage volume. On
+  kind there's no such class and the PVCs sit `Pending` — the whole reason this is an LKE lab.
+
+## 3. Install Langfuse via the official Helm chart
 
 ```bash
 helm repo add langfuse https://langfuse.github.io/langfuse-k8s && helm repo update
 # chart 1.5.32 / Langfuse v3.175.0 at time of writing — check artifacthub.io/packages/helm/langfuse-k8s/langfuse for latest
 helm install langfuse langfuse/langfuse -n langfuse \
-  --version 1.5.32 \
-  -f manifests/langfuse-values.yaml
+  --version 1.5.32 \                     # pin the chart — subchart key paths move between versions
+  -f manifests/langfuse-values.yaml      # the dissected file above; overrides the chart defaults
 kubectl -n langfuse get pods,pvc
 ```
 
-**What to look for:** the `langfuse-web` and `langfuse-worker` pods reach `Ready`, and the
-**Postgres + ClickHouse PVCs are `Bound` on `linode-block-storage`** (real Akamai Block
-Storage, not a kind hostPath). If a PVC won't Bind, its persistence key is a Bitnami
-*subchart passthrough* — run `helm get values langfuse -n langfuse` and check the subchart's
-`persistence.*` path. The bundled **MinIO is disabled** — `langfuse-values.yaml` sets
-`s3.deploy: false` and points the blob store at your **Linode Object Storage** bucket instead.
-ClickHouse's chart default is HA and won't fit a learning pool (`replicaCount: 3`,
-`resourcesPreset: 2xlarge`); the values file sets **`clusterEnabled: false` + `replicaCount: 1`**
-to run a single node. (Heads-up: the chart pins `bitnamilegacy/*` images by default — if a
-pull fails, override that subchart's `image.repository`.)
+- `helm install <release> <chart>` creates a named release (`langfuse`) from `langfuse/langfuse`.
+- `--version` pins the *chart* (not the app) — important here because the Bitnami subchart key
+  paths (`persistence.*`, `resourcesPreset`) drift between chart versions.
+- `-f` layers your values *over* the chart defaults; anything you don't set keeps its default
+  (which is why leaving `s3.deploy` unset would silently run MinIO).
 
-## 3. Open the UI and get project keys
+**Expected (happy path):** the `langfuse-web` and `langfuse-worker` pods reach `Ready`, and
+the **Postgres + ClickHouse PVCs are `Bound` on `linode-block-storage`** (real Akamai Block
+Storage, not a kind hostPath). The values file already arranged this: MinIO disabled in favor
+of your Object Storage bucket, and ClickHouse trimmed to a single node that fits a learning pool.
+
+**If something fails:**
+- *A PVC won't Bind* — its persistence key is a Bitnami *subchart passthrough*. Run
+  `helm get values langfuse -n langfuse` and check the subchart's `persistence.*` path.
+- *An image pull fails* — the chart pins `bitnamilegacy/*` images by default; override that
+  subchart's `image.repository`.
+
+## 4. Open the UI and get project keys
 
 ```bash
-kubectl -n langfuse port-forward svc/langfuse-web 3000:3000 &
+kubectl -n langfuse port-forward svc/langfuse-web 3000:3000 &   # tunnel local :3000 → the web Service's :3000; & backgrounds it
 # open http://localhost:3000 → create an org + project → Settings → API Keys
 #   copy the public key (pk-lf-...) and secret key (sk-lf-...)
 ```
 
-## 4. Repoint lab-02's Strands traces at Langfuse (the one-var swap)
+`port-forward svc/langfuse-web 3000:3000` proxies your laptop's `localhost:3000` to the
+`langfuse-web` Service inside the cluster (left = local port, right = Service port). The `&`
+runs it in the background so you keep your shell; kill it later with `kill %1` or `fg` then
+Ctrl-C. The `pk-lf-` / `sk-lf-` pair is the project-scoped credential the agent authenticates
+its OTLP push with in the next step.
+
+## 5. Repoint lab-02's Strands traces at Langfuse (the one-var swap)
 
 In the lab-02 telemetry setup, point the *same* OTLP exporter at Langfuse instead of the
 Collector — Langfuse is just another OTLP target:
@@ -142,7 +246,8 @@ os.environ["OTEL_EXPORTER_OTLP_HEADERS"]  = f"Authorization=Basic {LF_AUTH},x-la
 StrandsTelemetry().setup_otlp_exporter()      # same call as lab-02 — only the endpoint changed
 ```
 
-(The SDK appends `/v1/traces` to the generic endpoint; if you prefer, set
+(`x-langfuse-ingestion-version` pins Langfuse's OTLP ingestion format — required by v3. The
+SDK appends `/v1/traces` to the generic endpoint; if you prefer, set
 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=.../api/public/otel/v1/traces` explicitly. Langfuse's v3
 `get_client()` pattern — `LANGFUSE_HOST/PUBLIC_KEY/SECRET_KEY` env vars — is the documented
 alternative and auto-wires the exporter.) Run the agent and ask it something.
@@ -152,7 +257,7 @@ you saw in Tempo (lab-02) — but now each LLM span carries the **model, token c
 prompt/completion text, and a derived cost**. That's the payoff: identical instrumentation,
 an LLM-aware destination. You just proved lab-02's "OTLP is portable" claim by doing it.
 
-## 5. Cost + quality, natively (absorbing lab-03's LLM side)
+## 6. Cost + quality, natively (absorbing lab-03's LLM side)
 
 - **Cost:** open a trace → Langfuse shows per-observation token usage and a cost figure it
   *infers* from its model price table (not provider billing — accurate only if the model name
@@ -161,7 +266,7 @@ an LLM-aware destination. You just proved lab-02's "OTLP is portable" claim by d
   + rubric) and it scores observations automatically — the same "is it good?" signal you
   hand-pushed via Pushgateway in lab-03, with no plumbing. Scores attach to the trace.
 
-## 6. The things the metrics stack simply can't do
+## 7. The things the metrics stack simply can't do
 
 - **Prompt management:** create a versioned prompt in Langfuse, deploy a new version, and (if
   you wire the SDK's prompt fetch) roll it back — version control for prompts, impossible in

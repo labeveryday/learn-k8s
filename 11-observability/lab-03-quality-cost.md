@@ -63,13 +63,37 @@ the Strands agent instrumented with `StrandsTelemetry`.
 ## 1. Cost accounting from vLLM token metrics
 
 You already scrape `vllm:prompt_tokens_total` and `vllm:generation_tokens_total` (lab-01).
-Turn them into money. The dashboard's **"Estimated cost ($/min)"** panel
-(`manifests/grafana-dashboard-llm.yaml`) already carries this PromQL:
+Turn them into money. The dashboard you imported in lab-01 (`manifests/grafana-dashboard-llm.yaml`)
+isn't built in a browser — it's a **ConfigMap** carrying the dashboard JSON, and the Grafana
+sidecar imports any ConfigMap labeled `grafana_dashboard: "1"`. That's "dashboards as code":
+the panel lives in git. Here is the cost panel, straight from that file's `panels[]` JSON:
+
+```json
+{
+  "type": "timeseries",
+  "title": "Estimated cost ($/min)  —  edit the price constants in the expr",
+  "fieldConfig": { "defaults": { "unit": "currencyUSD" } },   // Grafana renders the axis as $
+  "targets": [
+    {
+      "expr": "(rate(vllm:prompt_tokens_total[1m]) * 60 * 0.0000005) + (rate(vllm:generation_tokens_total[1m]) * 60 * 0.0000015)",
+      "legendFormat": "$/min (in*0.5e-6 + out*1.5e-6 per token)"
+    }
+  ]
+}
+```
+
+That `expr` is the whole trick — pulled out and annotated:
 
 ```promql
 (rate(vllm:prompt_tokens_total[1m])     * 60 * 0.0000005)   # input tokens  @ $0.50 / 1M
 + (rate(vllm:generation_tokens_total[1m]) * 60 * 0.0000015)  # output tokens @ $1.50 / 1M
+# rate(...[1m]) = tokens/sec averaged over 1m; *60 -> tokens/min; the tiny float is $/token.
+# 0.0000005 = $0.50 / 1,000,000 tokens;  0.0000015 = $1.50 / 1,000,000 tokens.
 ```
+
+Gotcha: the two prices are **per-token**, not per-million — `0.0000005`, not `0.50`. Off by
+six zeros and your cost panel is off by a million. The `*60` is what makes this a *$/min*
+panel (matching the title's `unit: currencyUSD`); drop it and you'd be reading $/sec.
 
 Edit the two constants to *your* economics. On self-hosted vLLM the "price" is really your
 amortized GPU-hour cost per token (Phase 09's LKE GPU bill ÷ tokens it can produce) — which
@@ -127,9 +151,15 @@ reports[0].run_display()              # prints score (0..1) + the judge's reason
 ```
 
 ```bash
-kubectl -n default port-forward svc/vllm 8000:8000 &
+kubectl -n default port-forward svc/vllm 8000:8000 &   # local :8000 -> vllm Service :8000;
+                                                       # matches the base_url in the script.
+                                                       # '&' backgrounds it so the prompt returns.
 python eval_quality.py
 ```
+
+The script never talks to the cluster directly — it hits `http://localhost:8000/v1`, which the
+port-forward tunnels to the in-cluster `vllm` Service. Same model serves the agent *and* the
+judge, so there's no second deployment and no API key (`api_key: "EMPTY"`).
 
 **What to look for:** each result has a **`score`** (0.0–1.0), a **`test_pass`** boolean,
 and a **`reason`** — the judge's written justification. That `reason` is the difference
@@ -143,16 +173,41 @@ in prod.)
 A score in your terminal isn't observable. Push it to Prometheus so it trends beside
 latency and cost. Add a **Pushgateway** (for short-lived eval jobs that Prometheus can't
 scrape directly) and emit `strands_eval_score` — the exact series the dashboard's
-**"Quality score"** panel already queries:
+**"Quality score"** panel (also in `grafana-dashboard-llm.yaml`) already queries:
+
+```json
+{
+  "type": "stat",
+  "title": "Quality score (Strands eval, 0-1)",
+  "fieldConfig": { "defaults": { "min": 0, "max": 1, "unit": "percentunit" } },  // 0..1 as %
+  "targets": [
+    { "expr": "avg_over_time(strands_eval_score[15m])", "legendFormat": "avg quality" }
+  ]
+}
+```
+
+The metric name in the panel's `expr` (`strands_eval_score`) must match the name you push
+*exactly* — that's the contract between the eval job and the dashboard. `avg_over_time(...[15m])`
+smooths the noisy one-shot scores into a trend.
 
 ```bash
 # The pushgateway chart ships its ServiceMonitor DISABLED by default — enable it so the
 # kube-prometheus Operator scrapes the pushed metric. Check artifacthub.io for the latest chart.
 helm install pushgw prometheus-community/prometheus-pushgateway \
-  --namespace monitoring \
-  --set serviceMonitor.enabled=true
-kubectl -n monitoring port-forward svc/pushgw-prometheus-pushgateway 9091:9091 &
+  --namespace monitoring \                  # same ns as Prometheus, so the Operator can find it
+  --set serviceMonitor.enabled=true         # creates a ServiceMonitor CRD -> Operator scrapes it
+kubectl -n monitoring port-forward svc/pushgw-prometheus-pushgateway 9091:9091 &  # local push port
 ```
+
+- `helm install pushgw <chart>` names the release `pushgw`; that's why the Service is
+  `pushgw-prometheus-pushgateway` (release name + chart name) — the port-forward target must
+  match exactly.
+- `--set serviceMonitor.enabled=true` is the load-bearing flag. The Pushgateway *receives*
+  pushed metrics but does not scrape itself; the ServiceMonitor is the CRD that tells the
+  kube-prometheus Operator "scrape this endpoint." Without it the metric arrives at the
+  gateway and is never collected — the `Quality score` panel stays "No data."
+- The `:9091` port-forward is for the *push* side: your `eval_quality.py` POSTs the score to
+  `localhost:9091`. The *scrape* side (Operator → gateway) stays in-cluster.
 
 Append to `eval_quality.py` after the run:
 
@@ -161,9 +216,13 @@ import requests
 # Per strands-agents-evals 0.2.0 the per-case score lives here. If your installed
 # version differs, inspect with reports[0].run_display() or vars(reports[0].case_results[0]).
 score = reports[0].case_results[0].evaluation_output.score   # the judge's 0..1 score
-requests.post("http://localhost:9091/metrics/job/strands_eval",
-              data=f"strands_eval_score {score}\n")
+requests.post("http://localhost:9091/metrics/job/strands_eval",   # /metrics/job/<job> = the Pushgateway API
+              data=f"strands_eval_score {score}\n")                # Prometheus text format: "<name> <value>\n"
 ```
+
+The pushed metric name (`strands_eval_score`) is exactly what the panel's `expr` queries
+above. The `/metrics/job/strands_eval` path is the Pushgateway's grouping key — it labels the
+series with `job="strands_eval"`, which is why the Operator's scrape (and the panel) find it.
 
 The `--set serviceMonitor.enabled=true` above is what makes Prometheus ingest
 `strands_eval_score` — the chart does **not** scrape itself by default, so without that flag
@@ -182,19 +241,71 @@ one pane.
 ## 4. Define two SLOs
 
 An SLO is a promise with a number: a target you hold the platform to. Encode two as
-Prometheus rules:
+Prometheus rules. Here is the whole CRD (`manifests/prometheusrule-slo.yaml`) — a
+`PrometheusRule` is the same Operator-watched-CRD pattern as the ServiceMonitor: you
+*declare* the rule and the Operator compiles it into Prometheus' rule files and reloads.
+
+```yaml
+apiVersion: monitoring.coreos.com/v1   # the CRD group the kube-prometheus Operator owns
+kind: PrometheusRule                   # not Prometheus-native — the Operator translates it
+metadata:
+  name: llm-slo
+  namespace: default                   # rule can live in ANY ns; the selector below is what binds it
+  labels:
+    app: vllm
+    # THE load-bearing label: stock kube-prometheus-stack's ruleSelector matches release=<name>.
+    # Our kps-values.yaml sets ruleSelectorNilUsesHelmValues=false so any namespace is scanned;
+    # without this 'release' label the Operator would ignore the rule and it'd never load.
+    release: monitoring
+spec:
+  groups:
+    - name: llm-slo.rules              # the group name you'll see in Prometheus UI > Status > Rules
+      rules:
+        # --- Recording rule: precompute p95 TTFT into a NEW series, cheap to graph/alert on.
+        - record: llm:ttft_p95_seconds # 'record:' = derived series name (the ':' is the recording-rule convention)
+          expr: histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket[5m])))
+
+        # --- SLO 1: latency. Page if p95 TTFT stays above 5s for 5 minutes.
+        - alert: LLMLatencySLOBreached # 'alert:' = an alert rule (vs 'record:'); this is the alert NAME
+          expr: llm:ttft_p95_seconds > 5   # reuses the recording rule above — don't recompute the quantile
+          for: 5m                      # the condition must hold continuously 5m -> 'pending' then 'firing'
+          labels:
+            severity: warning          # routed by Alertmanager; attaches to the alert
+          annotations:
+            summary: "vLLM p95 time-to-first-token over 5s SLO"
+            description: "p95 TTFT = {{ $value }}s (SLO: < 5s) for 5m."   # {{ $value }} = the breaching number
+
+        # --- SLO 2: error rate. Page if gateway 5xx exceeds 1% for 5 minutes.
+        - alert: LLMErrorSLOBreached
+          expr: |
+            sum(rate(envoy_http_downstream_rq_xx{envoy_response_code_class="5"}[5m]))
+              / clamp_min(sum(rate(envoy_http_downstream_rq_xx[5m])), 1) > 0.01   # 5xx / all > 1%
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Gateway 5xx rate over 1% SLO"
+            description: "5xx fraction = {{ $value }} (SLO: < 0.01) for 5m."
+```
 
 ```bash
 kubectl apply -f manifests/prometheusrule-slo.yaml
 ```
 
-Read the rules (`manifests/prometheusrule-slo.yaml`):
-- A **recording rule** `llm:ttft_p95_seconds` precomputes p95 TTFT (cheap to alert on).
-- **SLO 1 (latency):** alert `LLMLatencySLOBreached` fires if p95 TTFT > 5s for 5m.
-- **SLO 2 (errors):** alert `LLMErrorSLOBreached` fires if gateway 5xx fraction > 1% for 5m.
-
-A `PrometheusRule` is the same Operator-watched-CRD pattern as the ServiceMonitor: you
-declare the rule, the Operator compiles it into Prometheus' rule files.
+The fields that make it work:
+- **`record:` vs `alert:`** — a recording rule precomputes an expensive expression into a
+  new series (`llm:ttft_p95_seconds`); the alert rule then references that cheap series
+  instead of recomputing the p95 quantile on every evaluation. SLO 1 does exactly this.
+- **`for: 5m`** is what turns a *spike* into an *SLO breach*. The condition has to stay true
+  for the full window before the alert leaves `pending` and starts `firing` — so a one-off
+  blip doesn't page you.
+- **`clamp_min(..., 1)`** in SLO 2 guards against divide-by-zero: with no traffic the
+  denominator would be 0, so it's clamped to a floor of 1 and the fraction reads 0, not `NaN`.
+- Beginner gotcha: the **`release: monitoring`** label is not decoration. On stock
+  kube-prometheus-stack the Operator only picks up `PrometheusRule`s whose labels match its
+  `ruleSelector`. Drop that label (or mistype the release name) and `kubectl apply` succeeds,
+  the object exists — but it **never reaches Prometheus** and no group shows up under Status >
+  Rules. A silent failure, exactly like the ServiceMonitor's label trap.
 
 **What to look for:**
 
@@ -204,14 +315,17 @@ declare the rule, the Operator compiles it into Prometheus' rule files.
 ```
 
 Run the load generator hard enough and watch `LLMLatencySLOBreached` move from `inactive`
-→ `pending` (the `for: 5m` clock) → `firing`. That state machine *is* the SLO.
+→ `pending` (the `for: 5m` clock is counting) → `firing` (it elapsed). Watch this in
+Prometheus UI → **Status → Alerts** (not Rules — the alert state machine lives there). That
+state machine *is* the SLO.
 
 ## 5. Break it, then read the error (Kelsey lens)
 
 Make a *quality* regression that every other signal misses:
 
 ```bash
-# In eval_quality.py, swap the agent's system prompt to something that tanks answers:
+# In eval_quality.py, change the system_prompt= argument inside get_response()'s Agent(...)
+# call (NOT the judge's rubric) to something that tanks answers:
 #   system_prompt="Answer every question with a haiku about the weather."
 python eval_quality.py
 ```

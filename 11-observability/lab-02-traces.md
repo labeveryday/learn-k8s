@@ -67,7 +67,9 @@ since `07/lab-04` — now instrumented.
 
 ## 1. Run a trace backend: OTel Collector + Tempo
 
-Install Tempo (the trace store) and the Collector (the funnel) into `monitoring`:
+Two pieces: **Tempo** is the trace store (a TSDB indexed by trace ID), and the **Collector**
+is the funnel every producer exports to. Add the repos and install both into the `monitoring`
+namespace lab-01 created:
 
 ```bash
 helm repo add grafana https://grafana.github.io/helm-charts
@@ -76,9 +78,9 @@ helm repo update
 
 # Tempo single-binary (dev shape). Pin it — check artifacthub.io/packages/helm/grafana/tempo for latest.
 helm install tempo grafana/tempo \
-  --version 1.23.0 \
-  --namespace monitoring \
-  -f manifests/tempo-values.yaml
+  --version 1.23.0 \                     # chart 1.23.0 = Tempo app 2.8.0
+  --namespace monitoring \               # same ns as Prometheus+Grafana so the datasource can reach it
+  -f manifests/tempo-values.yaml         # values below — the OTLP receivers MUST be turned on here
 
 # OTel Collector. Pin it — check artifacthub.io/packages/helm/opentelemetry-helm/opentelemetry-collector for latest.
 helm install otel-collector open-telemetry/opentelemetry-collector \
@@ -87,25 +89,134 @@ helm install otel-collector open-telemetry/opentelemetry-collector \
   -f manifests/otel-collector-values.yaml
 ```
 
-Read the values: `tempo-values.yaml` **explicitly enables** the OTLP receivers — recent
-Tempo charts ship with *all* ingest protocols **off**, so a missing receiver silently drops
-every span (a classic "where are my traces" trap). `otel-collector-values.yaml` defines a
-`traces` pipeline: receive OTLP (4317/4318) → `batch` → export to `tempo:4317`.
+- `helm install <release> <repo>/<chart>` deploys the chart; `-f <values>` overrides the
+  chart's defaults with our file. The release name becomes the Service prefix — that's why the
+  Collector's Service is `otel-collector-opentelemetry-collector` (release `otel-collector` +
+  chart name) and Tempo's is just `tempo`.
+- Pin `--version` for both: an unpinned chart upgrades silently and can change ports or defaults
+  out from under you (Tempo's query port already moved once — see below).
 
-Wire Tempo into Grafana as a datasource (the sidecar hot-loads it):
+### What `tempo-values.yaml` turns on
 
-```bash
-kubectl apply -f manifests/grafana-datasource-tempo.yaml
+The single-binary Tempo chart ships with **every ingest protocol off**, so the one thing this
+file *must* do is open the OTLP receiver — otherwise the Collector's exports are silently
+dropped and you get the classic "where are my traces?" with zero errors anywhere:
+
+```yaml
+tempo:
+  # Turn ON the OTLP receivers so the Collector (and anything else) can push spans.
+  receivers:
+    otlp:                            # <-- the load-bearing block; default chart leaves this UNSET = no ingest
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317     # OTLP/gRPC ingest — this is where the Collector exports to
+        http:
+          endpoint: 0.0.0.0:4318     # OTLP/HTTP ingest (same protocol, HTTP transport)
+  storage:
+    trace:
+      backend: local                 # filesystem store — lab only; use S3/GCS in prod
+      local:
+        path: /var/tempo/traces      # ephemeral: dies with the Pod, fine for a lab
+  resources:
+    requests:
+      cpu: "200m"
+      memory: 256Mi
 ```
 
-**What to look for:**
+Gotcha: `0.0.0.0` (not `localhost`) is required — the Collector connects from *another* Pod,
+so Tempo must listen on all interfaces, not just loopback. And note the **query** port is
+`3200` on the single-binary chart (the old default was `3100`); the datasource below uses it.
+
+### What `otel-collector-values.yaml` wires up
+
+The Collector's whole job is decoupling: producers speak OTLP to one endpoint; the Collector
+batches and fans out to whatever backend(s) you run. The file defines exactly one `traces`
+pipeline — receive OTLP, batch, send to Tempo:
+
+```yaml
+mode: deployment            # one central collector Deployment; NOT a per-node DaemonSet agent
+image:
+  repository: otel/opentelemetry-collector-k8s   # the k8s distro the chart expects
+  tag: "0.152.0"                                  # pin to the chart's appVersion so the image can't drift to :latest
+
+# The chart's "preset" pipelines assume cluster-wide RBAC we don't need; define our own
+# minimal pipeline instead.
+presets:
+  kubernetesAttributes:
+    enabled: false          # off = no ClusterRole to read Pod metadata; keeps the lab RBAC tiny
+
+config:
+  receivers:
+    otlp:                   # accept spans over OTLP — Strands defaults to OTLP/HTTP (4318)
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+  processors:
+    batch: {}               # batch spans before export — fewer, larger writes downstream
+  exporters:
+    otlp/tempo:             # forward traces to Tempo's OTLP gRPC ingest (4317, opened above)
+      endpoint: tempo.monitoring.svc.cluster.local:4317   # Tempo's Service FQDN, NOT :3200 (that's query, not ingest)
+      tls:
+        insecure: true      # in-cluster plaintext; no certs for the lab
+    debug:
+      verbosity: basic      # also log a span summary so you can prove receipt in the Collector's logs
+  service:
+    pipelines:
+      traces:                          # the ONE pipeline: in → process → out
+        receivers: [otlp]              # what comes in
+        processors: [batch]            # what happens in between
+        exporters: [otlp/tempo, debug] # where it goes: Tempo + stdout (so you can grep it)
+```
+
+Two beginner traps here. First, a receiver/exporter is only live if it's **listed in a
+pipeline** — defining `otlp/tempo` under `exporters` does nothing until it appears in
+`pipelines.traces.exporters`. Second, the exporter endpoint is the *ingest* port `4317`, not
+the query port `3200`; pointing it at `3200` is a silent dead end.
+
+Wire Tempo into Grafana as a datasource. No UI clicking — kube-prometheus-stack's Grafana runs
+a sidecar that watches for ConfigMaps labeled `grafana_datasource: "1"` and hot-loads them:
+
+```bash
+kubectl apply -f manifests/grafana-datasource-tempo.yaml   # the sidecar picks it up within seconds
+```
+
+```yaml
+apiVersion: v1
+kind: ConfigMap                        # not a Grafana CRD — just a labeled ConfigMap the sidecar finds
+metadata:
+  name: grafana-datasource-tempo
+  namespace: monitoring                # MUST be Grafana's namespace or the sidecar never sees it
+  labels:
+    grafana_datasource: "1"            # the magic label the sidecar selects on — wrong label = silently ignored
+data:
+  tempo-datasource.yaml: |             # the value is a Grafana datasource-provisioning file, embedded as a string
+    apiVersion: 1
+    datasources:
+      - name: Tempo
+        type: tempo
+        access: proxy                  # Grafana proxies queries server-side (browser never hits Tempo directly)
+        url: http://tempo.monitoring.svc.cluster.local:3200   # Tempo's QUERY API — 3200, NOT the 4317 ingest port
+        uid: tempo
+        jsonData:
+          tracesToMetrics:             # lets a span link out to the Prometheus metrics around it
+            datasourceUid: prometheus  # the chart's pre-wired Prometheus datasource uid
+```
+
+This is the mirror image of the Collector config: the *ingest* path uses `4317`, the *query*
+path (Grafana → Tempo) uses `3200`. Mixing them up is the most common Tempo wiring bug.
+
+**What you should see:**
 
 ```bash
 kubectl -n monitoring get pods | grep -E 'tempo|otel-collector'   # both Running
 # In Grafana → Connections → Data sources → Tempo → "Test" → green.
 ```
 
-Note the Tempo query URL is `:3200` (the single-binary chart moved it from the old 3100).
+Two `Running` Pods and a green "Test" in Grafana mean the chain is live end to end: Grafana can
+reach Tempo's query API, and Tempo's ingest is open for the Collector. Nothing's flowing yet —
+that needs an instrumented agent (next).
 
 ## 2. Instrument the Strands agent with native OpenTelemetry
 
@@ -114,29 +225,39 @@ emits the Agent/Cycle/LLM/Tool span tree automatically once telemetry is set up.
 
 ```bash
 cd agents && source .venv/bin/activate
-pip install 'strands-agents[otel]'
+pip install 'strands-agents[otel]'   # the [otel] extra pulls the OpenTelemetry SDK + OTLP exporter
 ```
 
 Expose the Collector's OTLP/HTTP port to your laptop (where the Strands process runs) and
 set the standard OTel env var:
 
 ```bash
-kubectl -n monitoring port-forward svc/otel-collector-opentelemetry-collector 4318:4318 &
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+kubectl -n monitoring port-forward svc/otel-collector-opentelemetry-collector 4318:4318 &   # local 4318 → Collector's OTLP/HTTP
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"   # the OTel SDK reads THIS var; no code needed to pick the target
 kubectl -n default port-forward svc/vllm 8000:8000 &     # the model, as in 07/lab-04
 ```
 
+- `port-forward svc/<name> L:R &` tunnels your laptop's port `L` to the Service's port `R`
+  through the apiserver, backgrounded (`&`) so the shell stays free. The Strands process runs
+  *on your laptop*, so it needs `localhost` reachability to in-cluster Services.
+- `OTEL_EXPORTER_OTLP_ENDPOINT` is the OTel standard env var — `StrandsTelemetry` (next) reads
+  it instead of hardcoding the Collector address. That's why the agent code stays
+  cluster-agnostic.
+
 In your agent (the `agents/src/agent.py` you pointed at vLLM in `07/lab-04`), turn on
-telemetry **before** creating the `Agent` — two lines:
+telemetry **before** creating the `Agent`. Paste the import line with your existing imports,
+and the three setup lines immediately after them — **before any `Agent(...)` call**:
 
 ```python
 from strands.telemetry import StrandsTelemetry
 
 strands_telemetry = StrandsTelemetry()
 strands_telemetry.setup_otlp_exporter()   # spans → OTEL_EXPORTER_OTLP_ENDPOINT (the Collector)
-strands_telemetry.setup_meter(enable_otlp_exporter=True)  # also export Strands METRICS (used in lab-03)
+strands_telemetry.setup_meter(enable_otlp_exporter=True)  # exports Strands METRICS too; not needed for
+                                                          # traces here — turned on now so lab-03's
+                                                          # quality metric has a path. Safe to include.
 
-# ... then build the Agent as before (model=vLLM OpenAIModel, tools=[...]) ...
+# ... then build the Agent exactly as before (model=vLLM OpenAIModel, tools=[...]) ...
 ```
 
 Run one task that *uses a tool* so the trace has a Tool span to show, then ask a question:
@@ -160,7 +281,9 @@ kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80 &
 # Browser: http://localhost:3000 → Explore → datasource "Tempo" → Search → run.
 ```
 
-Pick your trace and expand it. You'll see the Strands hierarchy:
+Search returns a list of recent traces by service and time; the newest row (top) is the
+request you just ran. Click it to open the waterfall, then expand it. You'll see the Strands
+hierarchy:
 
 ```
 Agent span                      ← the whole invocation (total tokens, final answer)

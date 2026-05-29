@@ -4,7 +4,7 @@
 
 ## Honest caveat (read first)
 
-**vLLM is a GPU-first project.** It targets CUDA. On your Apple Silicon Mac:
+**vLLM is a GPU-first project.** It targets CUDA (NVIDIA's GPU compute API). On your Apple Silicon Mac:
 
 - vLLM CPU mode *runs*, but is slow (seconds/token with small models).
 - The vLLM image is large (~5–10 GB).
@@ -18,17 +18,19 @@
 
 **What you'll skip and revisit on real GPU hardware:**
 
-- Real throughput testing, PagedAttention benefits, tensor parallelism, GPU operator, node taints/tolerations for `nvidia.com/gpu`.
+- Real throughput testing, PagedAttention benefits, tensor parallelism, GPU operator, node taints/tolerations (node scheduling rules — covered in Lab 04) for `nvidia.com/gpu`.
 
 If the vLLM CPU image is too heavy, **the fallback path** uses your existing **ollama** as a stand-in server; the K8s patterns are identical.
 
 ## Why vLLM (when you get GPUs)
 
-- **Continuous batching**: instead of padding requests into fixed batches, vLLM dynamically merges in-flight requests at the token level.
-- **PagedAttention**: treats the KV cache like virtual memory pages — dramatic memory efficiency, enables long contexts.
+First, two terms the rest leans on: the **KV cache** is the model's running memory of the tokens so far (what it attends back to); **tensor parallelism** is splitting one model across several GPUs.
+
+- **Continuous batching**: instead of padding requests into fixed batches, vLLM dynamically merges in-flight requests at the token level — serves many at once instead of one-at-a-time.
+- **PagedAttention**: stores the KV cache in small reusable chunks (like an OS pages physical memory) instead of one big contiguous block, so memory isn't wasted — enables long contexts.
 - **OpenAI-compatible API**: drop-in replacement for OpenAI clients.
 
-Result: 5–20× higher throughput than naive HF serving on the same GPU.
+Result: 5–20× higher throughput than naive HF (Hugging Face) serving on the same GPU.
 
 ## Labs
 

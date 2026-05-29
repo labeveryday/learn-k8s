@@ -38,9 +38,11 @@ reason a `SpinApp` is safer than a hand-rolled Deployment for Wasm.
 ## 0. Prereqs
 
 `spin-lab` from lab-02 is your active context, the spin-operator pod is `Running`, and
-you have the `hello-spin/` project from lab-01. For Step 4's vLLM shim you need a vLLM
-Service reachable at `vllm.default.svc.cluster.local:8000` (Phase 06) — Steps 1–3 stand
-alone without it.
+you have the `hello-spin/` project from lab-01. Steps 1–3 stand alone. Step 4 is
+illustrative on `spin-lab`: it forwards to a vLLM Service at
+`vllm.default.svc.cluster.local:8000`, but that vLLM lives on your *Phase 06* cluster,
+not on `spin-lab` — so don't expect to `curl` a working model here without redeploying
+vLLM onto this cluster (Step 4 explains).
 
 ## 1. Push the Wasm to an OCI registry
 
@@ -60,15 +62,53 @@ expires in an hour; if a later step `ImagePullBackOff`s, the artifact aged out �
 
 ## 2. Run it as a SpinApp — and watch what the operator generates
 
+Here is the whole object you're about to apply (`manifests/spinapp.yaml`) — short, because
+the operator fills in everything you'd otherwise hand-write:
+
+```yaml
+apiVersion: core.spinkube.dev/v1alpha1   # the SpinKube CRD group (NOT apps/v1 — this is a custom type)
+kind: SpinApp                            # the operator watches for this kind and reconciles it
+metadata:
+  name: hello-spin                       # becomes the Deployment/Service name AND the app-name label below
+  namespace: default
+spec:
+  image: "ttl.sh/hello-spin:1h"          # the OCI artifact from Step 1 — the .wasm, not a container image
+  executor: containerd-shim-spin         # names the SpinAppExecutor (lab-02); THIS is what makes the
+                                         #   operator stamp runtimeClassName: wasmtime-spin-v2 on the pod
+  replicas: 1                            # desired pods — same meaning as a Deployment's replicas
+```
+
+The two load-bearing fields, and the beginner traps in each:
+
+- **`executor: containerd-shim-spin`** is the whole point. It references the `SpinAppExecutor`
+  you installed in lab-02; the operator reads it to learn *which* `runtimeClassName` to put on
+  the pod (`wasmtime-spin-v2`). Name an executor that doesn't exist and the operator can't
+  resolve a runtime class — the pod never gets the shim and your Wasm won't run. You never type
+  `runtimeClassName` yourself; this field is how the operator derives it.
+- **`image:` points at an OCI artifact that is *just your `.wasm`*** (Step 1 pushed it), not a
+  layered container image. The classic trap: re-push under the same `:1h` tag and re-apply, and
+  nothing changes — the image *reference* in this manifest is identical, so the pod keeps the
+  old artifact. To roll out new code you must bump the tag (Step 4) and edit `image:` here.
+
+> The manifest also carries a commented-out `variables:` block and notes — that's the Step 4
+> wiring (passing `vllm_url` to a prompt-shaping handler). Leave it commented for Steps 2–3;
+> Step 4 explains why supplying a value there isn't enough on its own.
+
+Apply it and watch one object fan out into several:
+
 ```bash
 cd ..                                       # back to 08-spinkube/ (manifests/ lives here, not in hello-spin/)
-kubectl apply -f manifests/spinapp.yaml
+kubectl apply -f manifests/spinapp.yaml     # send the SpinApp to the apiserver; the operator does the rest
 kubectl get spinapp
 kubectl get pods -l core.spinkube.dev/app-name=hello-spin
 ```
 
 You applied **one** object (`SpinApp/hello-spin`). The operator, watching for `SpinApp`s,
-reacts by creating a **Deployment** (and Service) on your behalf. Confirm the chain
+reacts by creating a **Deployment** (and Service) on your behalf. The operator stamps
+everything it generates with the label `core.spinkube.dev/app-name=<your SpinApp name>` —
+that's the selector you'll use throughout this lab to find the Deployment/Service/pods it
+created. (The API group is still `core.spinkube.dev` even though the GitHub org moved to
+`spinframework` in lab-02 — the org name changed, the API didn't.) Confirm the chain
 actually happened:
 
 ```bash
@@ -93,10 +133,15 @@ instead of `runc`. You didn't type it; the `SpinAppExecutor` told the operator t
 ## 3. Call it
 
 ```bash
-kubectl port-forward svc/hello-spin 3000:80 &
-curl -s http://localhost:3000/
-kill %1 2>/dev/null
+kubectl port-forward svc/hello-spin 3000:80 &   # tunnel localhost:3000 → the Service's port 80; & backgrounds it
+curl -s http://localhost:3000/                  # hit the app through that tunnel
+kill %1 2>/dev/null                             # close the tunnel (%1 = the backgrounded port-forward job)
 ```
+
+`port-forward svc/hello-spin 3000:80` maps a local port to the **Service** (the operator made
+it), so the request walks the same Service ClusterIP → kube-proxy → pod path as any workload —
+no special Wasm routing. The `&` runs it in the background so the same shell can `curl`; `kill
+%1` tears it down after.
 
 **What to look for:** the same response you got from `spin up` in lab-01 — but now it's a
 WebAssembly module served as a first-class Kubernetes workload, scheduled next to your
@@ -106,11 +151,25 @@ The request path is ordinary: Service ClusterIP → kube-proxy DNAT → pod. Onl
 
 ## 4. Make it a real platform piece — a prompt-shaping shim in front of vLLM
 
+> **Illustrative on `spin-lab`, and it requires writing handler code.** Your vLLM lives on
+> the *Phase 06* cluster, not this dedicated `spin-lab` k3d cluster — so the forward below
+> won't actually reach a model here unless you redeploy vLLM onto `spin-lab` first. Read
+> this for the pattern; the layers truly stack (gateway → shim → vLLM, same cluster) in
+> Phase 09 on LKE. This step also needs you to write a JSON-parsing, prompt-injecting
+> handler in your chosen SDK — there's no starter snippet, so treat it as "wire it up in
+> your language," not copy-paste.
+
 This is the role Wasm plays best: a per-request shim that's too small and too bursty to
-deserve a container. Edit the lab-01 handler so it reads the incoming JSON, prepends a
-house system prompt (or strips a banned field), then forwards to the vLLM Service at
-`http://vllm.default.svc.cluster.local:8000/v1/chat/completions`. Rebuild, re-push under
-a **fresh tag**, point `spinapp.yaml`'s `image:` at it, and re-apply.
+deserve a container. Five beats, each silent if you skip it:
+
+1. **Edit the lab-01 handler** so it reads the incoming JSON, prepends a house system
+   prompt (or strips a banned field), then forwards to the vLLM Service at
+   `http://vllm.default.svc.cluster.local:8000/v1/chat/completions`.
+2. **Declare the variable** in `spin.toml` (the gate below, point 1).
+3. **Allow-list the vLLM host** in `spin.toml` (the gate below, point 2).
+4. **`spin build`, then re-push under a fresh tag** (the snippet below — a same-tag push
+   won't change anything).
+5. **Point `spinapp.yaml`'s `image:` at the fresh tag and re-apply.**
 
 > **Two `spin.toml` gates the handler depends on — easy to miss, both silent if wrong.
 > Both come straight from lab-01's "the sandbox is shut by default" lesson:**

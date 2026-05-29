@@ -38,6 +38,11 @@ the expensive GPU pool last (lab-03), and tear everything down the same day (lab
 - `kubectl` + `helm` (from `00-prep`).
 - Phases 03–08 understood — this phase *re-runs* them on LKE, it doesn't re-teach them.
 
+> **Run every command in this phase from inside `09-lke-akamai/`** (`cd 09-lke-akamai`).
+> The labs use relative paths: `manifests/...` is this folder, `../05-gateway-api/...` reaches
+> a sibling phase, and lab-01 writes `lke-kubeconfig.yaml` here. Run them from anywhere else
+> and those paths don't resolve.
+
 ## Objectives
 
 1. Provision an LKE cluster with `linode-cli`, point `kubectl` at its kubeconfig, and

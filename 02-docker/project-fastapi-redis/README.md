@@ -2,6 +2,16 @@
 
 A small HTTP API with a Redis-backed visit counter. Builds your image, wires it to a Redis service, exposes it on `localhost:8000`.
 
+## What's new here
+
+Up to now the only web app you'd seen was the raw `http.server` from lab-03. This adds three things:
+
+- **FastAPI** — a Python web framework (defines the routes in `app.py`).
+- **uvicorn** — the ASGI server that runs it. The `CMD ["uvicorn", "app:app", ...]` means "in `app.py`, serve the FastAPI object named `app`" (module:variable).
+- the **`redis`** Python package — the client library that talks to the Redis service.
+
+This project reuses `HEALTHCHECK` (lab-03) in the Dockerfile and `depends_on: condition: service_healthy` (lab-06) in `compose.yaml` — that pairing is why `api` waits for `cache` to be ready, not just started. Recap, not new material.
+
 ## Layout
 
 ```
@@ -18,16 +28,18 @@ project-fastapi-redis/
 ```bash
 cd 02-docker/project-fastapi-redis
 docker compose up --build -d
-curl http://localhost:8000/
-curl http://localhost:8000/hits
+curl http://localhost:8000/        # {"hello":"world","host":"...","pid":1}
+curl http://localhost:8000/hits    # {"hits":1}  (increments each call)
 docker compose logs -f api
 ```
 
 ## Endpoints
 
-- `GET /` — hello + hostname
-- `GET /hits` — increments and returns the counter
-- `GET /healthz` — used by Compose healthcheck
+- `GET /` — hello + hostname → `{"hello":"world","host":"<id>","pid":1}`
+- `GET /hits` — increments and returns the counter → `{"hits":N}`
+- `GET /healthz` — used by Compose healthcheck → `{"ok":true}`
+
+With Redis down (`docker compose stop cache`), `/hits` and `/healthz` return HTTP 503 with body `{"detail":"redis down: ..."}` — that's the failure exercise 1 asks you to induce.
 
 ## Exercises
 

@@ -54,42 +54,68 @@ recorded the answer. That discovery step *is* MCP doing its job: the catalog is 
 server, not by you. Note the exact tool names; you'll allow-list a subset next.
 
 > Want a *custom* server? Model it the same way: a `RemoteMCPServer` (kagent.dev/v1alpha2)
-> pointing at any MCP endpoint over `STREAMABLE_HTTP`/`SSE`, or a kmcp `MCPServer` that
+> pointing at any MCP endpoint over `STREAMABLE_HTTP`/`SSE` (the two HTTP transports MCP
+> servers speak over), or a kmcp `MCPServer` that
 > kagent runs in-cluster for you. The built-in server is the simplest correct path, so
 > this lab uses it. (The old `ToolServer` kind was removed in v1alpha2 — if a blog tells
 > you to create a `ToolServer`, it's stale.)
 
 ## 2. Grant a subset of tools to the agent
 
-```bash
-kubectl apply -f manifests/agent-with-tools.yaml
-```
-
-Open the manifest. It's `k8s-helper` from lab-02 plus a `tools` block. Read the reference
-shape, because it's the heart of the lab:
+This is the *same* `k8s-helper` Agent from lab-02 (same `apiVersion`, `kind`, `name`,
+`namespace`, `modelConfig`) with one block added: `tools`. Re-applying it is an edit, not a
+new object — the controller reconciles the change in place. Here's the whole manifest
+(`manifests/agent-with-tools.yaml`), then the fields that carry the lab:
 
 ```yaml
+apiVersion: kagent.dev/v1alpha2   # v1alpha2 — the ToolServer kind was removed here; tools are now references
+kind: Agent
+metadata:
+  name: k8s-helper                # SAME name as lab-02 → apply mutates that Agent, no second one
+  namespace: kagent
+spec:
+  description: "A concise Kubernetes helper that can inspect the cluster."
+  type: Declarative               # controller-run ("managed") agent; model+prompt+tools nest under declarative:
+  declarative:
+    modelConfig: vllm             # references the ModelConfig named 'vllm' (your in-cluster vLLM)
+    systemMessage: |
+      You are a concise Kubernetes assistant with read access to the cluster.
+      Use your tools to check real state before answering. Answer in one or two sentences.
     tools:
-      - type: McpServer
-        mcpServer:
-          apiGroup: kagent.dev
+      - type: McpServer           # this tool comes from an MCP SERVER, not an in-process function
+        mcpServer:                # a structured REFERENCE to a cluster object — the agent points AT the catalog
+          apiGroup: kagent.dev    # the three fields below name the RemoteMCPServer to call
           kind: RemoteMCPServer
-          name: kagent-tool-server
-          toolNames:
+          name: kagent-tool-server   # the built-in server the lab-01 Helm install created in this namespace
+          toolNames:              # the ALLOW-LIST — server may expose dozens; this agent gets exactly these
             - list_pods
             - get_pod
             - list_events
 ```
 
-Three things this says:
+The whole agent is here, but only two areas changed from lab-02. The `systemMessage` now
+tells the model it *has* tools ("check real state before answering") — and the `tools` block
+grants them. That block is the heart of the lab:
 
-- `type: McpServer` — this tool comes from an MCP server (not an in-process function).
+- `type: McpServer` — declares where the tool comes from: an MCP server, not a Python
+  function welded into the agent process.
 - `mcpServer` — a **structured reference** to a cluster object: kind `RemoteMCPServer`,
   named `kagent-tool-server`, in apiGroup `kagent.dev`. The agent points *at* the catalog;
-  it doesn't contain the tools.
+  it doesn't contain the tools. This is the indirection the whole lab is about.
 - `toolNames` — the **allow-list**. The server may expose dozens of tools; this agent gets
   exactly these three. Changing the agent's capabilities is now a `kubectl apply`, not a
   rebuild.
+
+> **Two beginner gotchas.** (1) `toolNames` must match names the server actually
+> *discovered* (the list from step 1) — kagent grants only tools that exist, so a typo here
+> yields a phantom tool that silently never gets granted, not an error at apply time. (2)
+> `tools` lives **under `declarative:`**, alongside `modelConfig` and `systemMessage` — not
+> at the top of `spec`. Only `description` and `type` sit on `spec` directly; everything a
+> managed agent *runs with* nests inside `declarative:`.
+
+```bash
+kubectl apply -f manifests/agent-with-tools.yaml   # mutates the existing k8s-helper Agent in place
+```
 
 > If `kubectl describe remotemcpserver kagent-tool-server -n kagent` showed different tool
 > names than `list_pods` / `get_pod` / `list_events`, edit the `toolNames` in
@@ -106,16 +132,17 @@ silently grant a phantom tool. (Reconcile plane again — the lab-02 skill, reus
 ## 3. Ask it to *do* something it couldn't before
 
 ```bash
-kubectl -n kagent port-forward svc/kagent 8081:80 &
+kubectl -n kagent port-forward svc/kagent 8081:80 &   # tunnel localhost:8081 → kagent Service :80; '&' backgrounds it
 kagent invoke --agent k8s-helper \
   --task "List the pods in the default namespace and tell me which are not Running."
-kill %1 2>/dev/null
+# No CLI? Same curl fallback as lab-02 step 3, against localhost:8081.
+kill %1 2>/dev/null                                   # stop the backgrounded port-forward (job %1) when done
 ```
 
 Same agent that *guessed* in lab-02 now *checks*. Watch the tool call happen:
 
 ```bash
-kubectl -n kagent logs deploy/kagent --tail=80 | grep -i tool
+kubectl -n kagent logs deploy/kagent --tail=80 | grep -i tool   # last 80 log lines, filtered to tool-call activity
 ```
 
 **What to look for:** a log line showing the agent invoking `list_pods` (and possibly
@@ -180,12 +207,13 @@ Remove a tool from the agent's `toolNames` (or mistype one) and re-apply, then i
 that needs it:
 
 ```bash
-kubectl describe agent k8s-helper -n kagent
-kubectl -n kagent port-forward svc/kagent 8081:80 &
+kubectl describe agent k8s-helper -n kagent           # confirm the tool you removed is gone from status
+kubectl -n kagent port-forward svc/kagent 8081:80 &   # tunnel + background, as in step 3
 kagent invoke --agent k8s-helper \
   --task "List the pods in the default namespace and tell me which are not Running."
-kill %1 2>/dev/null
-kubectl -n kagent logs deploy/kagent --tail=80 | grep -i tool
+# No CLI? Same curl fallback as lab-02 step 3, against localhost:8081.
+kill %1 2>/dev/null                                   # stop the backgrounded port-forward
+kubectl -n kagent logs deploy/kagent --tail=80 | grep -i tool   # find which tool call was refused/unresolved
 ```
 
 **Read the error, that's the lesson.** The agent does *not* crash — it reports a tool
