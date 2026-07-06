@@ -1,4 +1,4 @@
-# tempo-values.yaml — Helm values for Grafana Tempo, SINGLE-BINARY mode (lab-02).
+# tempo-values.yaml - Helm values for Grafana Tempo, SINGLE-BINARY mode (lab-02).
 #
 # Install:
 #   helm repo add grafana https://grafana.github.io/helm-charts
@@ -10,7 +10,7 @@
 #
 # Tempo is the TRACE backend: a TSDB-for-spans. It indexes by trace ID and stores spans
 # cheaply on object storage (here: local disk, fine for a lab). The single-binary chart
-# is the dev/test shape — one Pod, all roles. Production uses tempo-distributed.
+# is the dev/test shape - one Pod, all roles. Production uses tempo-distributed.
 # Note: the grafana/tempo single-binary chart is migrating to the grafana-community repo
 # (post-2026). If `grafana/tempo` stops updating, switch to `grafana-community/tempo`
 # (single-binary) or `grafana/tempo-distributed` (production).
@@ -30,7 +30,7 @@ tempo:
           endpoint: 0.0.0.0:4318
   storage:
     trace:
-      backend: local                # filesystem store — lab only; use S3/GCS in prod
+      backend: local                # filesystem store - lab only; use S3/GCS in prod
       local:
         path: /var/tempo/traces
   resources:

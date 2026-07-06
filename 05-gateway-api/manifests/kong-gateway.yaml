@@ -1,4 +1,4 @@
-# A Gateway implemented by Kong. Same shape as the kgateway one — only the
+# A Gateway implemented by Kong. Same shape as the kgateway one - only the
 # gatewayClassName differs. That's the Gateway API portability promise.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway

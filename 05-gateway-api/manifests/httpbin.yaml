@@ -1,5 +1,5 @@
 # Demo app used by every lab in this phase.
-# go-httpbin echoes request info as JSON — perfect for *seeing* routing work.
+# go-httpbin echoes request info as JSON - perfect for *seeing* routing work.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

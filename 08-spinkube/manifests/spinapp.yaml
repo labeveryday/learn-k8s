@@ -1,4 +1,4 @@
-# spinapp.yaml — run a Wasm module as a first-class workload.
+# spinapp.yaml - run a Wasm module as a first-class workload.
 # The runtimeClassName (via the SpinAppExecutor) is what routes this pod to the Spin
 # shim instead of runc. Bump `image` after each spin registry push.
 apiVersion: core.spinkube.dev/v1alpha1
@@ -15,7 +15,7 @@ spec:
   #   - name: vllm_url
   #     value: "http://vllm.default.svc.cluster.local:8000/v1/chat/completions"
   #
-  # IMPORTANT: a SpinApp `variables` entry only *supplies* a value — it does not create
+  # IMPORTANT: a SpinApp `variables` entry only *supplies* a value - it does not create
   # the variable. The variable must ALSO be declared in the app's spin.toml under
   # [variables] and wired into the component config, e.g.:
   #
@@ -26,7 +26,7 @@ spec:
   #   vllm_url = "{{ vllm_url }}"
   #
   # AND the vLLM host must be listed in that component's allowed_outbound_hosts, or
-  # Spin blocks the outbound call at runtime (no error in the YAML — the handler just
+  # Spin blocks the outbound call at runtime (no error in the YAML - the handler just
   # can't reach vLLM):
   #
   #   allowed_outbound_hosts = ["http://vllm.default.svc.cluster.local:8000"]

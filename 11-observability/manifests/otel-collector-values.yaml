@@ -1,4 +1,4 @@
-# otel-collector-values.yaml — Helm values for the OpenTelemetry Collector (lab-02).
+# otel-collector-values.yaml - Helm values for the OpenTelemetry Collector (lab-02).
 #
 # Install:
 #   helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
@@ -10,7 +10,7 @@
 #
 # The Collector is the funnel: every telemetry producer (your Strands agent) speaks OTLP
 # to ONE endpoint; the Collector receives, batches, and FANS OUT to backends. Swap Tempo
-# for Jaeger later and not a single agent changes — that decoupling is the whole point of
+# for Jaeger later and not a single agent changes - that decoupling is the whole point of
 # running a collector instead of exporting straight to a backend.
 
 mode: deployment            # one central collector; not a per-node agent for this lab
@@ -34,7 +34,7 @@ config:
         http:
           endpoint: 0.0.0.0:4318
   processors:
-    batch: {}               # batch spans before export — fewer, larger writes
+    batch: {}               # batch spans before export - fewer, larger writes
   exporters:
     # Forward traces to Tempo's OTLP ingest (gRPC 4317). Tempo Service name from the
     # tempo chart install below.

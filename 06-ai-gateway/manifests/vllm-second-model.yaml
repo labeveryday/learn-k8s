@@ -1,4 +1,4 @@
-# vllm-second-model.yaml — a SECOND CPU chat model so you can demo multi-model routing.
+# vllm-second-model.yaml - a SECOND CPU chat model so you can demo multi-model routing.
 # Distinct instruct model from vllm-deploy.yaml (TinyLlama vs Qwen) so routing by the
 # request body "model" value is observable. Both serve /v1/chat/completions.
 # arm64 nodes: swap the image tag for vllm/vllm-openai-cpu:latest-aarch64.

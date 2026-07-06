@@ -1,4 +1,4 @@
-# kgateway-multimodel-route.yaml — ONE endpoint, fanned out to TWO models by the
+# kgateway-multimodel-route.yaml - ONE endpoint, fanned out to TWO models by the
 # request body's "model" value. This is lab-04 Part A's marquee mechanism.
 #
 # How body-based routing works on agentgateway: a route match cannot read a JSON body
@@ -12,7 +12,7 @@
 #   model: "TinyLlama/TinyLlama-1.1B-Chat-v1.0" -> vllm-b-ai (Service vllm-b)
 ---
 # 1) Second AI backend, pointing at the vllm-b Service. host/port are siblings of
-#    `openai` under spec.ai.provider — same shape as kgateway-ai-backend.yaml.
+#    `openai` under spec.ai.provider - same shape as kgateway-ai-backend.yaml.
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayBackend
 metadata:

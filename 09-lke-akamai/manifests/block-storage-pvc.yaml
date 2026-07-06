@@ -1,5 +1,5 @@
-# block-storage-pvc.yaml — a PVC that provisions a real Akamai Block Storage volume.
-# The '-retain' StorageClass keeps the volume after the PVC is deleted (data safety) —
+# block-storage-pvc.yaml - a PVC that provisions a real Akamai Block Storage volume.
+# The '-retain' StorageClass keeps the volume after the PVC is deleted (data safety) -
 # which is exactly why lab-04 teardown deletes volumes explicitly.
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -13,5 +13,5 @@ spec:
   resources:
     requests:
       # Akamai Block Storage has a 10Gi minimum. Request less (e.g. 1Mi) and the Linode
-      # CSI rounds UP to 10Gi and binds — it does NOT stay Pending or error.
+      # CSI rounds UP to 10Gi and binds - it does NOT stay Pending or error.
       storage: 10Gi

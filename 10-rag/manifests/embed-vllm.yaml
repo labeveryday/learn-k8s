@@ -1,7 +1,7 @@
-# embed-vllm.yaml — a SECOND vLLM, serving a small EMBEDDING model on CPU.
+# embed-vllm.yaml - a SECOND vLLM, serving a small EMBEDDING model on CPU.
 #
 # This is the same vllm/vllm-openai-cpu image as the chat server in Phase 06
-# (06-ai-gateway/manifests/vllm-deploy.yaml) — only the model and the --runner flag
+# (06-ai-gateway/manifests/vllm-deploy.yaml) - only the model and the --runner flag
 # change. The chat server serves /v1/chat/completions; this server serves
 # /v1/embeddings. Two jobs, one server family.
 #
@@ -12,7 +12,7 @@
 # and embedding, so you MUST be explicit or vLLM guesses wrong.
 #   # check docs.vllm.ai/en/latest/models/pooling_models/embed/ for the current flag
 #
-# MODEL: BAAI/bge-small-en-v1.5 — 384-dim, ~33M params, English, CPU-friendly. vLLM's docs
+# MODEL: BAAI/bge-small-en-v1.5 - 384-dim, ~33M params, English, CPU-friendly. vLLM's docs
 # list bge / e5-small as supported pooling models. intfloat/e5-small-v2 is a drop-in
 # alternative (also 384-dim). Keep the dimension in mind: the vector DB collection in
 # qdrant-values.yaml MUST be created with the SAME size (384), or upserts fail.

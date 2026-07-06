@@ -1,0 +1,16 @@
+# A second, disposable kind cluster for the NetworkPolicy enforcement demo
+# (lab 03). Ships without a CNI so Calico can be the one that comes up;
+# the pod subnet matches Calico's default expectation.
+#
+#   kind create cluster --config kind-calico.yaml
+#   kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
+#   ...run the demo...
+#   kind delete cluster --name sandbox-net
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: sandbox-net
+networking:
+  disableDefaultCNI: true
+  podSubnet: 192.168.0.0/16
+nodes:
+  - role: control-plane

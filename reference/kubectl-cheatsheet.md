@@ -94,7 +94,7 @@ kubectl get events -A --sort-by=.lastTimestamp | tail -20
 # Show secrets decoded (single key)
 kubectl get secret S -o jsonpath='{.data.PASS}' | base64 -d ; echo
 
-# Force re-pull image (no tag change) — restart triggers new pull only if imagePullPolicy=Always
+# Force re-pull image (no tag change) - restart triggers new pull only if imagePullPolicy=Always
 kubectl rollout restart deploy/NAME
 ```
 

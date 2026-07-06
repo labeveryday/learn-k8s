@@ -92,3 +92,40 @@ free -h
 lsof -i :8080            who's on this port
 strace -f -e openat cmd
 ```
+
+## Users & groups
+```
+useradd -m -s /bin/bash u   create user, home + bash
+groupadd g                  create group
+usermod -aG g u             append to group (keep -a)
+passwd u                    set password
+id u                        uid, gid, all groups
+groups u                    group names only
+su - u                      switch user, login shell
+sudo cmd                    run one command as root
+sudo -l                     what am I allowed to run
+chown user:group f          change owner and group
+```
+
+## Packages (apt)
+```
+apt update                  refresh package index
+apt upgrade                 upgrade installed packages
+apt install -y pkg          install with deps
+apt search term             search the index
+apt show pkg                version, deps, size
+dpkg -l                     list installed packages
+dpkg -L pkg                 files a package installed
+```
+
+## Services (systemd)
+```
+systemctl status svc        state, PID, recent logs
+systemctl start/stop svc    change state now
+systemctl enable svc        start at boot (disable undoes)
+systemctl list-units --type=service
+systemctl daemon-reload     re-read unit files
+journalctl -u svc           logs for one unit
+journalctl -u svc -f        follow
+journalctl --since "10 min ago"
+```

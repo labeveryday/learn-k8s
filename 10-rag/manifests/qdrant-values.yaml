@@ -1,4 +1,4 @@
-# qdrant-values.yaml — Helm values for the Qdrant vector database on kind.
+# qdrant-values.yaml - Helm values for the Qdrant vector database on kind.
 #
 # Install (see lab-01). Pin the chart; the chart's appVersion tracks the Qdrant server:
 #   # check github.com/qdrant/qdrant-helm/releases for the latest chart version
@@ -9,13 +9,13 @@
 #
 # Qdrant is the clean teaching choice: a single-purpose vector DB with an HTTP + gRPC API,
 # an HNSW (approximate-nearest-neighbor) index, and a one-command Helm chart. The valid
-# alternative is pgvector (the `vector` extension on Postgres) — same idea, bolted onto a
+# alternative is pgvector (the `vector` extension on Postgres) - same idea, bolted onto a
 # relational DB instead of a dedicated engine. Use pgvector when you already run Postgres
 # and want vectors next to your rows; use Qdrant when search is the point.
 #
 # kind has no real LoadBalancer, so keep the Service ClusterIP and reach it with
 # `kubectl port-forward` (lab-01). On LKE (Phase 09) you'd front this with a NodeBalancer
-# Service and back it with the Block Storage CSI for the PVC below — vectors are state,
+# Service and back it with the Block Storage CSI for the PVC below - vectors are state,
 # and state on a real cluster wants durable storage.
 replicaCount: 1
 

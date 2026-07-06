@@ -1,21 +1,21 @@
-# Operating a Cluster — the field guide
+# Operating a Cluster: the field guide
 
-> The questions you actually hit at 2am: *what am I connected to, how do I get
-> into a pod, how do services find each other, where are my secrets, how do I
-> reach a service from my laptop.* This guide answers each one with the mental
-> model first, then the command, then where to go deeper.
+> The questions you hit at 2am: *what am I connected to, how do I get into a pod,
+> how do services find each other, where are my secrets, how do I reach a service
+> from my laptop.* This guide answers each one with the mental model first, then
+> the command, then where to go deeper.
 >
-> **Stanford lens:** every question below is really "where is the boundary?" —
-> between you and the cluster (kubeconfig), between pods (the flat pod network),
-> between namespaces (DNS + RBAC), between cluster and outside world (Service
-> type). Learn the boundaries and the commands fall out.
+> Every question below is one question: where is the boundary? Between you and the
+> cluster (kubeconfig), between pods (the flat pod network), between namespaces
+> (DNS + RBAC), between the cluster and the outside world (Service type). Learn the
+> boundaries and the commands fall out.
 
 ---
 
 ## 0. First: do you even have a cluster?
 
-If `kubectl` returns nothing useful, you probably have **no cluster and an empty
-kubeconfig** — that's the normal starting state, not a bug.
+If `kubectl` returns nothing useful, you probably have no cluster and an empty
+kubeconfig. That's the normal starting state, not a bug.
 
 ```bash
 kubectl config get-contexts          # table of every cluster you can talk to
@@ -29,12 +29,12 @@ echo "$KUBECONFIG"                   # override path; unset => ~/.kube/config
   §1 and make one.
 - A context exists → §2 tells you *what kind* of cluster it is.
 
-### Make a local cluster (Linux — this box)
+### Make a local cluster (Linux, this box)
 
 `00-prep/README.md` assumes a Mac (Homebrew + Colima). On Linux:
 
 ```bash
-# 1. Docker engine (needs sudo — run with `!` in Claude Code, or in your shell)
+# 1. Docker engine (needs sudo - run with `!` in Claude Code, or in your shell)
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker "$USER"      # then log out/in (or: newgrp docker)
 
@@ -52,7 +52,7 @@ kubectl get nodes                         # one node, Ready
 you `kind create cluster --name learn`, it adds a context named **`kind-learn`**
 to your kubeconfig and makes it current. Deeper: `03-kubernetes/lab-01`.
 
-### Or use a real cluster (Akamai LKE — you have `linode-cli`)
+### Or use a real cluster (Akamai LKE, you have `linode-cli`)
 
 ```bash
 linode-cli lke clusters-list
@@ -63,8 +63,8 @@ export KUBECONFIG=~/lke.yaml
 kubectl get nodes
 ```
 
-LKE costs credits — learn the fundamentals on free local `kind`, take it to LKE in
-`09-lke-akamai/`.
+LKE costs credits. Learn the fundamentals on free local `kind`, then take it to LKE
+in `09-lke-akamai/`.
 
 ---
 
@@ -86,7 +86,7 @@ kubectl cluster-info                 # prints the API server URL
 
 Rule of thumb: **localhost API server = local cluster; a public DNS name = a
 cloud cluster you're paying for.** Always check `current-context` before you run a
-`delete` — this is how people nuke prod.
+`delete`. This is how people nuke prod.
 
 ---
 
@@ -118,7 +118,7 @@ kubeconfig you merge yourself (or set `KUBECONFIG=file1:file2` to layer several)
 
 ```bash
 kubectl get pods [-A] [-o wide]          # -A = all namespaces; -o wide adds node+IP
-kubectl describe pod NAME                 # events are at the BOTTOM — read them
+kubectl describe pod NAME                 # events are at the BOTTOM - read them
 kubectl logs NAME [-c CONTAINER] [-f] [--previous]   # --previous = the crashed one
 kubectl exec -it NAME -- sh               # shell inside the container
 kubectl port-forward pod/NAME 8080:80     # your localhost:8080 -> pod's :80
@@ -153,17 +153,17 @@ kubectl run tmp --rm -it --image=curlimages/curl -- sh
 ```
 
 Key facts:
-- **Within a namespace, the short name works** (`web`). **Across namespaces you
-  must qualify it** with `.<namespace>` (or the full `.svc.cluster.local`).
-- If `curl` fails, check `kubectl get endpoints SVC` — **empty endpoints = the
-  Service's `selector` matches no running pod** (the #1 cause). The Service can
-  exist and still route nowhere.
+- Within a namespace, the short name works (`web`). Across namespaces you must
+  qualify it with `.<namespace>` (or the full `.svc.cluster.local`).
+- If `curl` fails, check `kubectl get endpoints SVC`. Empty endpoints mean the
+  Service's `selector` matches no running pod, the most common cause. The Service
+  can exist and still route nowhere.
 - By default every pod can reach every pod (flat network). Restricting that is a
   **NetworkPolicy**. Deeper: `03-kubernetes/lab-04`.
 
 ---
 
-## 5. Secrets (and ConfigMaps) — store, list, consume
+## 5. Secrets (and ConfigMaps): store, list, consume
 
 ```bash
 kubectl create secret generic db-creds \
@@ -173,7 +173,7 @@ kubectl get secret db-creds -o yaml              # values are base64, NOT encryp
 kubectl get secret db-creds -o jsonpath='{.data.PASS}' | base64 -d; echo   # decode one key
 ```
 
-Consume two ways (a pod never reads a Secret by API — it's injected):
+Consume two ways (a pod never reads a Secret by API; it's injected):
 
 ```yaml
 # as env var (convenient; leaks into `ps` / child processes)
@@ -191,7 +191,7 @@ for *non*-secret config. Deeper: `03-kubernetes/lab-05`.
 
 ---
 
-## 6. Expose a service — from in-cluster to the public internet
+## 6. Expose a service: from in-cluster to the public internet
 
 This is a ladder. Each rung widens the boundary:
 
@@ -201,17 +201,17 @@ This is a ladder. Each rung widens the boundary:
 | `kubectl port-forward svc/NAME 8080:80` | your laptop, temporarily | dev / debugging |
 | `NodePort` | any node IP on a high port (30000–32767) | quick external, no LB |
 | `LoadBalancer` | a real external IP | prod (on LKE → a **NodeBalancer**; no-op on kind) |
-| **Ingress / Gateway API** | hostname + path routing, TLS | many services behind one entry — the Platform Track (`05-gateway-api/`) |
+| **Ingress / Gateway API** | hostname + path routing, TLS | many services behind one entry, the Platform Track (`05-gateway-api/`) |
 
 ```bash
-# The everyday one — pull any in-cluster service to your machine:
+# The everyday one - pull any in-cluster service to your machine:
 kubectl port-forward svc/web 8080:80        # localhost:8080 -> Service 'web' :80
 # (Ctrl-C to stop; it's a foreground tunnel, not a permanent route.)
 ```
 
 `port-forward` is the fast path to "is this thing even working?" without exposing
 anything. On LKE, a `type: LoadBalancer` Service provisions an Akamai NodeBalancer
-with a public IP — that's `09-lke-akamai/lab-02`.
+with a public IP; that's `09-lke-akamai/lab-02`.
 
 ---
 
@@ -221,7 +221,7 @@ with a public IP — that's `09-lke-akamai/lab-02`.
 1. kubectl get pods                  is it even there? what phase?
 2. kubectl describe pod NAME         events at the bottom tell you why
 3. kubectl logs NAME --previous      what did the crashed container say?
-4. kubectl get endpoints SVC         is the Service actually wired to pods?
+4. kubectl get endpoints SVC         is the Service wired to pods?
 5. kubectl run tmp --rm -it --image=curlimages/curl -- sh   reach it from inside?
 6. kubectl auth can-i ...            is RBAC denying you?
 ```
@@ -233,9 +233,9 @@ selector matches nothing (→ endpoints empty), or wrong namespace (→ `-A`).
 
 ## See also
 
-- `reference/kubectl-cheatsheet.md` — every command, terse.
-- `03-kubernetes/lab-01` — architecture, contexts, namespaces, k9s.
-- `03-kubernetes/lab-04` — Services, DNS, NodePort, the network model.
-- `03-kubernetes/lab-05` — ConfigMaps & Secrets in depth.
-- `03-kubernetes/lab-10` — observability and debugging.
-- `09-lke-akamai/` — taking all of this to a real Akamai LKE cluster.
+- `reference/kubectl-cheatsheet.md`: every command, terse.
+- `03-kubernetes/lab-01`: architecture, contexts, namespaces, k9s.
+- `03-kubernetes/lab-04`: Services, DNS, NodePort, the network model.
+- `03-kubernetes/lab-05`: ConfigMaps & Secrets in depth.
+- `03-kubernetes/lab-10`: observability and debugging.
+- `09-lke-akamai/`: taking all of this to a real Akamai LKE cluster.

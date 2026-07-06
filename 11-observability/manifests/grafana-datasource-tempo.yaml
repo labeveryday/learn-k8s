@@ -1,7 +1,7 @@
-# grafana-datasource-tempo.yaml — register Tempo as a Grafana datasource (lab-02).
+# grafana-datasource-tempo.yaml - register Tempo as a Grafana datasource (lab-02).
 #
 # kube-prometheus-stack's Grafana ships a sidecar that watches for ConfigMaps labeled
-# `grafana_datasource: "1"` and hot-loads them as datasources — no Grafana restart, no
+# `grafana_datasource: "1"` and hot-loads them as datasources - no Grafana restart, no
 # UI clicking. (The Prometheus datasource is pre-wired by the chart; we only add Tempo.)
 #
 # Apply: kubectl apply -f manifests/grafana-datasource-tempo.yaml

@@ -1,15 +1,14 @@
-# Lab 04 — Services and Networking
+# Lab 04: Services and Networking
 
-**What you'll build:** a `Service` in front of the three `web` Pods from lab-03 — a single
+**What you'll build:** a `Service` in front of the three `web` Pods from lab-03: a single
 stable virtual IP and DNS name that survives Pods dying and being replaced. Then you'll prove
 it works from inside the cluster, crack open the node to see the **iptables rules** kube-proxy
-wrote to make it work, expose it on a port, and preview NetworkPolicy. The point isn't nginx;
-it's the **indirection**: nothing upstream ever talks to a Pod IP, so Pods can churn freely.
+wrote to make it work, expose it on a port, and preview NetworkPolicy. The mechanism to grasp
+is **indirection**: nothing upstream ever talks to a Pod IP, so Pods can churn freely.
 
-> **The one idea (Stanford):** a Service is a *stable name for a moving target*. Pods are
-> cattle with disposable IPs; a Service is a fixed front door whose membership the system keeps
-> current by **label selector** — the same label glue from lab-03, now wiring traffic instead
-> of ownership.
+> **The one idea:** a Service is a *stable name for a moving target*. Pods are cattle with
+> disposable IPs; a Service is a fixed front door whose membership the system keeps current by
+> **label selector**, the same label glue from lab-03, now wiring traffic instead of ownership.
 
 ## 1. The problem
 
@@ -19,7 +18,7 @@ be talking to nothing. You need a stable virtual IP + DNS name in front of a fle
 That's a **Service**.
 
 A Service never points at a Pod *by name or IP*. It declares a **selector** (`app: web`) and
-the system continuously discovers which Pod IPs currently match — that live list is the Service's
+the system continuously discovers which Pod IPs currently match; that live list is the Service's
 **Endpoints**. Pod dies → Endpoints shrink. Replacement appears → Endpoints grow. The Service's
 own IP and DNS name never move.
 
@@ -35,7 +34,7 @@ own IP and DNS name never move.
 
 These stack: `NodePort` is a `ClusterIP` plus a node port, and `LoadBalancer` is a `NodePort`
 plus a cloud load balancer. On kind there's no cloud, so `LoadBalancer` Services sit `<pending>`
-forever — that's expected, not broken. You'll use `ClusterIP` for everything in-cluster and
+forever, which is expected, not broken. You'll use `ClusterIP` for everything in-cluster and
 reach it from your Mac with `port-forward`.
 
 ## 3. ClusterIP
@@ -54,22 +53,22 @@ metadata:
   name: web             # becomes the in-cluster DNS name: web.<namespace>.svc.cluster.local
 spec:
   selector:
-    app: web            # the LIVE membership filter — any Pod with this label becomes an Endpoint
+    app: web            # the LIVE membership filter - any Pod with this label becomes an Endpoint
   ports:
-    - port: 80            # service port — what clients hit on the ClusterIP (web:80)
-      targetPort: 80      # container port — where the request lands inside the Pod
+    - port: 80            # service port - what clients hit on the ClusterIP (web:80)
+      targetPort: 80      # container port - where the request lands inside the Pod
 ```
 
 Two things beginners get wrong here, and both fail *silently*:
 
 - **`selector` is not the same kind of selector as a Deployment's.** A Deployment's
   `matchLabels` declares *ownership* and is immutable; a Service's `selector` is a *live query*
-  and is fully editable. Change it and the Endpoints recompute on the next loop — that's
+  and is fully editable. Change it and the Endpoints recompute on the next loop, which is
   practice #3 below. If the selector matches **zero** Pods, the Service still exists and still
   has a ClusterIP, but Endpoints is empty and every request times out. No error is thrown.
 - **`port` vs `targetPort` are different roles.** `port` is the front door clients dial on the
   ClusterIP; `targetPort` is the door on the Pod. They're equal here (80→80) which hides the
-  distinction — but when an app listens on, say, 8000 while you expose it as 80, getting these
+  distinction. When an app listens on, say, 8000 while you expose it as 80, getting these
   backwards means the Service answers on the right IP and forwards to a port nothing is listening on.
 
 Apply it and inspect what the system built:
@@ -81,15 +80,15 @@ kubectl describe svc web           # shows Endpoints = pod IPs
 kubectl get endpoints web
 ```
 
-- `describe svc web` prints the ClusterIP, the port mapping, and the `Endpoints:` line — the
+- `describe svc web` prints the ClusterIP, the port mapping, and the `Endpoints:` line: the
   actual Pod IPs the selector resolved to *right now*.
-- `get endpoints web` is the same membership list as a standalone object — this is the thing
+- `get endpoints web` is the same membership list as a standalone object: this is the thing
   kube-proxy watches, and the thing that changes when a Pod dies (practice #2).
 
 **What you should see:** a `web` Service with `TYPE ClusterIP` and a `CLUSTER-IP` like
 `10.96.x.x`, and `Endpoints` listing **three** Pod IPs ending in `:80` (one per `web` Pod from
-lab-03). Three Endpoints means the selector found all three Pods — that's the indirection
-working: you addressed a *label*, the system filled in the *IPs*.
+lab-03). Three Endpoints means the selector found all three Pods: the indirection
+working, where you addressed a *label* and the system filled in the *IPs*.
 
 Test from inside the cluster:
 
@@ -104,17 +103,17 @@ curl http://web.default.svc.cluster.local
   deletes it the moment you exit, so it leaves nothing behind. You need a Pod *inside* the
   cluster because a ClusterIP is only routable from inside the cluster network.
 - `curl http://web` works because CoreDNS gives every Service a short name resolvable from Pods
-  in the **same namespace** — you don't need the IP at all.
+  in the **same namespace**; you don't need the IP at all.
 
 **What you should see:** the nginx welcome HTML from both curls. Run the first `curl` a few
-times — kube-proxy spreads requests across the three Endpoints, so you're load-balancing without
+times: kube-proxy spreads requests across the three Endpoints, so you're load-balancing without
 configuring anything. The full name is `<svc>.<namespace>.svc.cluster.local`. CoreDNS resolves it.
 
-## 4. How it actually works (MIT hat on)
+## 4. How it works
 
-`kube-proxy` watches Services and Endpoints from the apiserver. On each node, it programs iptables (or IPVS — an alternative kernel load-balancing mechanism; ignore which one for now) rules: "packets to ClusterIP:port → DNAT to one of these pod IPs." DNAT = destination NAT, rewriting the destination IP — the same iptables `nat` table you saw in Docker lab-04. There's no daemon proxying packets; it's kernel netfilter (the in-kernel packet-filtering framework) all the way.
+`kube-proxy` watches Services and Endpoints from the apiserver. On each node, it programs iptables (or IPVS, an alternative kernel load-balancing mechanism; ignore which one for now) rules: "packets to ClusterIP:port → DNAT to one of these pod IPs." DNAT = destination NAT, rewriting the destination IP, the same iptables `nat` table you saw in Docker lab-04. There's no daemon proxying packets; it's kernel netfilter (the in-kernel packet-filtering framework) all the way.
 
-That's the whole trick: the ClusterIP `10.96.x.x` is **not a real interface anyone owns** — no
+That's the trick: the ClusterIP `10.96.x.x` is **not a real interface anyone owns**. No
 process is listening on it. It exists only as a target in iptables rules that rewrite the packet's
 destination to a real Pod IP before it leaves the kernel. Kill kube-proxy and existing rules keep
 working; what stops is *updating* them when Endpoints change.
@@ -125,14 +124,14 @@ working; what stops is *updating* them when Endpoints change.
 docker exec -it learn-control-plane iptables -t nat -L KUBE-SERVICES -n | head
 ```
 
-- `docker exec -it learn-control-plane ...` runs a command *inside the node container* — remember
+- `docker exec -it learn-control-plane ...` runs a command *inside the node container*. Remember
   from lab-01 that the kind "node" is itself a Docker container named `learn-control-plane`. The
   iptables rules live in the node's kernel namespace, not on your Mac.
 - `iptables -t nat -L KUBE-SERVICES -n` lists the `KUBE-SERVICES` chain in the `nat` table; `-n`
   skips slow DNS lookups so IPs print as numbers. `KUBE-SERVICES` is the entry point kube-proxy
-  installs — every Service flows through it.
+  installs; every Service flows through it.
 
-**What you should see:** `KUBE-SVC-*` / `KUBE-SEP-*` chains — each Service and each endpoint Pod gets a generated chain. You don't read these by hand; just confirm kube-proxy wrote them. (`SVC` = the per-Service chain that picks an endpoint; `SEP` = the per-endpoint chain that does the actual DNAT to one Pod IP. Three `web` Pods → three `KUBE-SEP-*` chains.)
+**What you should see:** `KUBE-SVC-*` / `KUBE-SEP-*` chains, one generated per Service and per endpoint Pod. You don't read these by hand; confirm kube-proxy wrote them. (`SVC` = the per-Service chain that picks an endpoint; `SEP` = the per-endpoint chain that does the DNAT to one Pod IP. Three `web` Pods → three `KUBE-SEP-*` chains.)
 
 ## 5. NodePort
 
@@ -152,9 +151,9 @@ spec:
 ```
 
 - `nodePort: 30080` pins the external port instead of letting K8s pick a random one in
-  30000–32767. It must fall inside that range, and it's opened on **every** node — even nodes
+  30000–32767. It must fall inside that range, and it's opened on **every** node: even nodes
   not running a `web` Pod will accept the packet and forward it internally.
-- `selector` and `port`/`targetPort` mean exactly what they did in section 3 — `NodePort` only
+- `selector` and `port`/`targetPort` mean exactly what they did in section 3; `NodePort` only
   *adds* the node-port layer on top of the ClusterIP behavior.
 
 With kind, to reach it from your Mac you either port-forward or recreate the cluster with `extraPortMappings`.
@@ -172,7 +171,7 @@ curl http://localhost:8080
 
 - `port-forward svc/web 8080:80` opens a tunnel from your Mac's `localhost:8080` straight to the
   Service's port 80, bypassing NodePort entirely. It works for any Service type (even plain
-  ClusterIP) because the tunnel runs through the apiserver, not the node network — which is why
+  ClusterIP) because the tunnel runs through the apiserver, not the node network, which is why
   it's the go-to for poking at in-cluster Services during development.
 
 **What you should see:** `port-forward` prints `Forwarding from 127.0.0.1:8080 -> 80` and stays
@@ -183,7 +182,7 @@ page. Ctrl-C the forward to close the tunnel.
 
 > Every Pod gets an IP. Every Pod can reach every other Pod directly. No NAT inside the cluster.
 
-This is a *requirement* of K8s, implemented by a **CNI plugin** (kindnet, Calico, Cilium, etc.). The flat-network assumption is why Services are simple: just DNAT to a Pod IP that's already routable.
+This is a *requirement* of K8s, implemented by a **CNI plugin** (kindnet, Calico, Cilium, etc.). The flat-network assumption is why Services are simple: DNAT to a Pod IP that's already routable.
 
 This is the foundation section 4 stood on: kube-proxy can DNAT a packet to *any* Pod IP and trust
 the kernel to route it, because every Pod IP is already reachable from every node with no NAT in
@@ -209,17 +208,17 @@ spec:
         - port: 8000               # ...and only on this port
 ```
 
-- `podSelector` here selects the Pods the policy *applies to* — the opposite direction from a
+- `podSelector` here selects the Pods the policy *applies to*, the opposite direction from a
   Service selector. The policy guards `app: api` Pods; it doesn't send traffic anywhere.
 - The gotcha: the moment **any** Ingress NetworkPolicy selects a Pod, that Pod flips from
   "allow all inbound" to "**deny all inbound except what's explicitly listed**." So this single
-  rule means `api` Pods now accept traffic *only* from `app: web` Pods on port 8000 — everything
+  rule means `api` Pods now accept traffic *only* from `app: web` Pods on port 8000; everything
   else is dropped. Empty `ingress` would mean deny-all.
 
 Note: kindnet doesn't enforce NetworkPolicy. For hands-on NP, install Calico in kind. Skip for now; internalize the concept.
 
 (That's why this is a *preview*: on kindnet the rule above is accepted by the apiserver and then
-ignored — the CNI has to enforce it. The concept is what carries forward.)
+ignored, because the CNI has to enforce it. The concept is what carries forward.)
 
 ## 8. Practice
 
@@ -232,4 +231,4 @@ ignored — the CNI has to enforce it. The concept is what carries forward.)
 
 → `lab-05-config-and-secrets.md`: your Pods have hard-coded config baked into the image. A
 **ConfigMap** and **Secret** pull that out, so the same image runs in dev and prod by swapping
-what's injected — not rebuilding.
+what's injected instead of rebuilding.

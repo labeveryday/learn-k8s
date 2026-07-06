@@ -1,4 +1,4 @@
-# grafana-dashboard-llm.yaml — the LLM golden-signals dashboard, as a ConfigMap.
+# grafana-dashboard-llm.yaml - the LLM golden-signals dashboard, as a ConfigMap.
 #
 # The Grafana sidecar watches for ConfigMaps labeled `grafana_dashboard: "1"` and
 # imports the embedded JSON as a dashboard automatically. This is "dashboards as code":
@@ -65,7 +65,7 @@ data:
         },
         {
           "type": "timeseries",
-          "title": "Estimated cost ($/min)  —  edit the price constants in the expr",
+          "title": "Estimated cost ($/min) - edit the price constants in the expr",
           "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "fieldConfig": { "defaults": { "unit": "currencyUSD" } },

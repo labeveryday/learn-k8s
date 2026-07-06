@@ -1,10 +1,10 @@
-# vllm-deploy.yaml — OpenAI-compatible vLLM server (CPU, tiny CHAT model) for kind.
+# vllm-deploy.yaml - OpenAI-compatible vLLM server (CPU, tiny CHAT model) for kind.
 # On LKE (Phase 09) you swap the image/model/resources for a GPU build; the Service
 # contract (port 8000, /v1 OpenAI API) stays identical.
 #
 # Image note: vllm/vllm-openai-cpu:latest-x86_64 is the prebuilt CPU server image.
 # On Apple Silicon / arm64 kind nodes use vllm/vllm-openai-cpu:latest-aarch64 instead.
-# Do NOT set VLLM_TARGET_DEVICE — it is a *build-time* flag and a no-op at runtime;
+# Do NOT set VLLM_TARGET_DEVICE - it is a *build-time* flag and a no-op at runtime;
 # the CPU image is already built for CPU.
 #
 # Model note: Qwen/Qwen2.5-0.5B-Instruct is an instruct/chat-tuned model, so the

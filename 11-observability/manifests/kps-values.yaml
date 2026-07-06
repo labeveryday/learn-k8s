@@ -1,4 +1,4 @@
-# kps-values.yaml — Helm values for kube-prometheus-stack on a local kind cluster.
+# kps-values.yaml - Helm values for kube-prometheus-stack on a local kind cluster.
 #
 # Install (lab-01):
 #   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts

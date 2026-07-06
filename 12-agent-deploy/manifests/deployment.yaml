@@ -1,0 +1,73 @@
+# The review agent as a Deployment.
+#
+# Three decisions in this file carry the phase's lessons:
+#   1. replicas: 1 + strategy Recreate. The agent has an identity (one
+#      Discord bot, one feedback ledger). Two copies means duplicate
+#      replies and split state. Lab 04 makes you break this on purpose.
+#   2. An initContainer clones the repo before the agent starts. The agent
+#      container never needs git credentials or clone logic; by the time it
+#      runs, /work/repo exists or the Pod never came up.
+#   3. Probes hit the Flask surface. Liveness asks "is the process alive";
+#      readiness asks "can it do its job" (repo present, Discord connected
+#      if enabled). Different questions, different endpoints (Phase 03 lab-08).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: review-agent
+  labels:
+    app: review-agent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate            # kill the old identity before starting the new one
+  selector:
+    matchLabels:
+      app: review-agent
+  template:
+    metadata:
+      labels:
+        app: review-agent
+    spec:
+      securityContext:
+        runAsNonRoot: true    # the image sets USER agent; this makes it a contract
+      initContainers:
+        - name: clone
+          image: alpine/git:2.45.2
+          # $(REPO_URL) and $(REPO_DIR) expand from env below (Phase 03 lab-05).
+          # || true keeps restarts working when the volume already has the clone.
+          command: ["sh", "-c", "git clone --depth 1 $(REPO_URL) $(REPO_DIR) || true"]
+          envFrom:
+            - configMapRef:
+                name: review-agent-config
+          volumeMounts:
+            - name: work
+              mountPath: /work
+      containers:
+        - name: agent
+          image: review-agent:0.1
+          imagePullPolicy: IfNotPresent   # kind loads the image locally; never pull
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: review-agent-config
+            - secretRef:
+                name: review-agent-secrets
+                optional: true            # the agent runs without Discord or a hosted key
+          volumeMounts:
+            - name: work
+              mountPath: /work
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: work
+          emptyDir: {}        # lab 04 replaces this with a PersistentVolumeClaim

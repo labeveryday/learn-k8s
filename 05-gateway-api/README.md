@@ -1,21 +1,21 @@
-# 05 — Gateway API: kgateway & Kong
+# 05: Gateway API with kgateway and Kong
 
 > Floor 1 of the platform. How traffic gets *into* the cluster, the modern way.
 
 ## Why this phase exists
 
-In `03-kubernetes/lab-07` you used **Ingress**. Ingress is frozen — no new features —
+In `03-kubernetes/lab-07` you used **Ingress**. Ingress is frozen (no new features),
 and every controller bolted its real behavior on through annotations, so an NGINX
 Ingress and a Kong Ingress were never portable. The community replaced it with the
 **Gateway API**: a richer, role-oriented, vendor-neutral standard. This is what you'll
-actually see in production from 2024 onward.
+see in production from 2024 onward.
 
-The trick most people miss: **Gateway API is a spec, not software.** You install the
-CRDs (the spec) once, then install an *implementation* that does the real work. The
-spec is portable; the engine underneath is swappable. This phase proves that the hard
-way — you install two implementations, **kgateway** (Envoy-based, CNCF) and **Kong**
-(OpenResty-based), against the *same* spec and watch the *same* `HTTPRoute` work on
-both. That portability is the dividend Ingress annotations could never pay.
+Gateway API is a specification, not software you run. You install the CRDs (the spec)
+once, then install an *implementation* that does the real work. The spec is portable;
+the engine underneath is swappable. This phase proves it: you install two
+implementations, kgateway (Envoy-based, CNCF) and Kong (OpenResty-based), against the
+*same* spec and watch the *same* `HTTPRoute` work on both. That portability is the
+dividend Ingress annotations could never pay.
 
 ## Objectives
 
@@ -40,10 +40,10 @@ the operator's `Gateway`. Ingress mashed all three into one object.
 
 ## Reading list (read the *why*, skim the API)
 
-- Gateway API intro & API concepts — gateway-api.sigs.k8s.io
-- kgateway docs — kgateway.dev (note: formerly "Gloo Gateway")
-- Kong Gateway Operator / KIC + Gateway API — docs.konghq.com
-- `kubectl explain gateway.spec` and `kubectl explain httproute.spec` — Kelsey's rule
+- Gateway API intro & API concepts: gateway-api.sigs.k8s.io
+- kgateway docs: kgateway.dev (formerly "Gloo Gateway")
+- Kong Gateway Operator / KIC + Gateway API: docs.konghq.com
+- `kubectl explain gateway.spec` and `kubectl explain httproute.spec` (read the schema from the tool, not the web)
 
 ## Labs (do in order)
 
@@ -57,13 +57,13 @@ the operator's `Gateway`. Ingress mashed all three into one object.
 ## kind gotcha (read before lab 02)
 
 On a real cloud, a `Gateway`/`Service type=LoadBalancer` gets a public IP. On **kind**
-it stays `<pending>` forever — there's no cloud load balancer. Two simple ways through:
+it stays `<pending>` forever: there's no cloud load balancer. Two ways through:
 
 - **Easiest:** `kubectl port-forward` to the gateway's service (used in every lab).
 - **More realistic:** install `cloud-provider-kind` (a tiny LB shim) in a second
   terminal so `LoadBalancer` services get a usable IP. Optional, shown in lab 02.
 
-Don't fight this on kind. On LKE (Phase 09) it just works via NodeBalancer.
+Don't fight this on kind. On LKE (Phase 09) a NodeBalancer provides one automatically.
 
 ## Manifests
 

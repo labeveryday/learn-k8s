@@ -1,4 +1,4 @@
-# prometheusrule-slo.yaml — encode two SLOs as Prometheus rules (lab-03).
+# prometheusrule-slo.yaml - encode two SLOs as Prometheus rules (lab-03).
 #
 # A PrometheusRule is another Operator-watched CRD: the operator compiles `groups` into
 # Prometheus' rule files and reloads. `record:` rules precompute an expression into a new

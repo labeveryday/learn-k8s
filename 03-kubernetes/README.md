@@ -2,9 +2,9 @@
 
 **Time budget:** ~50%. This is the main event.
 
-## Why Kubernetes exists (Stanford)
+## Why Kubernetes exists
 
-A single container is easy. A thousand containers across fifty machines, some failing, scaling under load, rolling out new versions without downtime — that's hard. Kubernetes solves this with one core pattern:
+A single container is easy. A thousand containers across fifty machines, some failing, scaling under load, rolling out new versions without downtime: that's hard. Kubernetes solves this with one core pattern:
 
 > **You declare desired state; controllers loop to make reality match.**
 
@@ -54,18 +54,20 @@ Reconcile = a controller wakes up, compares what you asked for (spec) to what ex
 
 ## Labs
 
-1. `lab-01-architecture-and-kind.md` — spin up a cluster, map parts to the diagram
-2. `lab-02-pods.md` — the atom of K8s
-3. `lab-03-deployments-and-replicasets.md` — controllers, rolling updates
-4. `lab-04-services-and-networking.md` — ClusterIP, NodePort, LoadBalancer
-5. `lab-05-config-and-secrets.md` — ConfigMap, Secret, env vs volume
-6. `lab-06-storage.md` — PV, PVC, StorageClass
-7. `lab-07-ingress.md` — L7 routing
-8. `lab-08-probes-and-lifecycle.md` — liveness, readiness, startup; PDBs
-9. `lab-09-rbac-and-security.md` — ServiceAccount, Roles, SecurityContext
-10. `lab-10-observability-and-debug.md` — logs, events, `kubectl debug`
-11. `lab-11-helm-and-kustomize.md` — packaging
-12. `exercises.md` — drills and a capstone (redeploy the Phase 2 app)
+1. `lab-01-architecture-and-kind.md`: spin up a cluster, map parts to the diagram
+2. `lab-02-pods.md`: the atom of K8s
+3. `lab-03-deployments-and-replicasets.md`: controllers, rolling updates
+4. `lab-04-services-and-networking.md`: ClusterIP, NodePort, LoadBalancer
+5. `lab-05-config-and-secrets.md`: ConfigMap, Secret, env vs volume
+6. `lab-06-storage.md`: PV, PVC, StorageClass
+7. `lab-07-ingress.md`: L7 routing
+8. `lab-08-probes-and-lifecycle.md`: liveness, readiness, startup; PDBs
+9. `lab-09-rbac-and-security.md`: ServiceAccount, Roles, SecurityContext
+10. `lab-10-observability-and-debug.md`: logs, events, `kubectl debug`
+11. `lab-11-helm-and-kustomize.md`: packaging
+12. `lab-12-jobs-cronjobs-daemonsets.md`: run-to-completion and one-per-node workloads
+13. `lab-13-scheduling-and-quotas.md`: affinity, spread, taints; ResourceQuota and LimitRange
+14. `exercises.md`: drills and a capstone (redeploy the Phase 2 app)
 
 ## The one workflow you'll use all day
 
@@ -81,10 +83,10 @@ kubectl delete -f manifest.yaml       # remove
 
 Memorize this loop. 90% of K8s operations are variations.
 
-## Panel notes
+## Three things to internalize
 
-> **Kelsey:** "Start with raw YAML, not Helm. When Helm breaks, you'll thank yourself. `kubectl explain pod.spec.containers` is better than most tutorials."
+> **Start with raw YAML, not Helm.** When Helm breaks, you'll thank yourself. `kubectl explain pod.spec.containers` teaches more than most tutorials.
 >
-> **Stanford:** "Pods, not containers, are the atomic unit. A Pod is a *shared-fate group* with a shared network namespace. This choice has consequences everywhere."
+> **Pods, not containers, are the atomic unit.** A Pod is a shared-fate group with a shared network namespace. This choice has consequences everywhere.
 >
-> **MIT:** "Every `kubectl apply` is an HTTP PATCH to the apiserver. `kubectl -v=8 get pods` shows the raw calls. Try it once."
+> **Every `kubectl apply` is an HTTP PATCH to the apiserver.** `kubectl -v=8 get pods` shows the raw calls. Try it once.

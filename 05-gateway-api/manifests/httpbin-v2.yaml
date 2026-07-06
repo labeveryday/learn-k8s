@@ -1,6 +1,6 @@
 # A second copy of the demo app, used for the traffic-split lab.
 # Identical image. The route injects an X-Version header per backend so you can watch
-# the weighted split shift traffic between v1 and v2 — it demonstrates weighted routing,
+# the weighted split shift traffic between v1 and v2 - it demonstrates weighted routing,
 # not a definitive proof of which pod handled each request.
 apiVersion: apps/v1
 kind: Deployment

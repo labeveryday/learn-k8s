@@ -1,4 +1,4 @@
-# langfuse-values.yaml — Helm values for self-hosting Langfuse v3 on LKE (lab-04).
+# langfuse-values.yaml - Helm values for self-hosting Langfuse v3 on LKE (lab-04).
 #
 # Install:
 #   helm repo add langfuse https://langfuse.github.io/langfuse-k8s && helm repo update
@@ -10,10 +10,10 @@
 # subcharts: postgresql, clickhouse, valkey (redis), and minio (S3). Below we keep
 # Postgres/ClickHouse/Redis bundled (single-node, trimmed for a learning cluster, with
 # their data on Akamai Block Storage), but DISABLE the bundled MinIO and point the blob
-# store at Linode Object Storage instead — so this one app exercises BOTH Akamai storage
+# store at Linode Object Storage instead - so this one app exercises BOTH Akamai storage
 # primitives: Block Storage (CSI PVCs) for the DBs, Object Storage (S3) for blobs.
 #
-# Treat secrets here as PLACEHOLDERS — generate real ones (lab-04 step 1) and prefer
+# Treat secrets here as PLACEHOLDERS - generate real ones (lab-04 step 1) and prefer
 # sourcing them from a Secret in production rather than inline values.
 # Field names follow the chart's values.yaml at the version above; if an install errors on
 # an unknown key, diff against the chart's values.yaml (subchart keys move between versions).
@@ -54,7 +54,7 @@ clickhouse:
   replicaCount: 1
   clusterEnabled: false     # the real HA lever: replicaCount 1 + clusterEnabled false = one non-HA node
   resourcesPreset: small    # default 2xlarge won't fit a learning pool
-  persistence:              # Bitnami subchart passthrough — if the PVC won't Bind, `helm get values` and check the subchart's persistence key path
+  persistence:              # Bitnami subchart passthrough - if the PVC won't Bind, `helm get values` and check the subchart's persistence key path
     enabled: true
     storageClass: linode-block-storage
     size: 20Gi            # ClickHouse is disk-heavy even for a lab
@@ -71,7 +71,7 @@ s3:
   region: "us-ord-1"                              # your Linode Object Storage region
   endpoint: "https://us-ord-1.linodeobjects.com"  # the regional S3 endpoint
   forcePathStyle: true     # Linode Object Storage is S3-compatible; confirm path-style at your endpoint
-  # credentials are OBJECTS with a .value subkey — NOT plain strings. (Use .secretKeyRef.name/.key
+  # credentials are OBJECTS with a .value subkey - NOT plain strings. (Use .secretKeyRef.name/.key
   # instead to source them from a Kubernetes Secret in production.)
   accessKeyId:
     value: "REPLACE_linode_obj_access_key"

@@ -23,7 +23,7 @@ images=(
   "registry.k8s.io/ingress-nginx/controller:v1.10.1"
   "kindest/node:v1.30.0"               # kind cluster node image
 
-  # Phase 4: skipped — using host's local ollama (already installed with models).
+  # Phase 4: skipped - using host's local ollama (already installed with models).
   # If you ever want the in-cluster path, uncomment one of these:
   # "ollama/ollama:latest"        # ~500 MB
   # "vllm/vllm-openai:latest"     # ~12 GB; GPU-oriented; Mac CPU mode is slow

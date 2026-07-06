@@ -1,4 +1,4 @@
-# modelconfig-vllm.yaml — tell kagent how to reach your model.
+# modelconfig-vllm.yaml - tell kagent how to reach your model.
 # baseUrl points at the in-cluster vLLM (OpenAI-compatible). Point it at your Phase 06
 # gateway host instead to inherit token limits + prompt guards on every agent call.
 apiVersion: v1

@@ -6,11 +6,11 @@ A small HTTP API with a Redis-backed visit counter. Builds your image, wires it 
 
 Up to now the only web app you'd seen was the raw `http.server` from lab-03. This adds three things:
 
-- **FastAPI** — a Python web framework (defines the routes in `app.py`).
-- **uvicorn** — the ASGI server that runs it. The `CMD ["uvicorn", "app:app", ...]` means "in `app.py`, serve the FastAPI object named `app`" (module:variable).
-- the **`redis`** Python package — the client library that talks to the Redis service.
+- **FastAPI**: a Python web framework (defines the routes in `app.py`).
+- **uvicorn**: the ASGI server that runs it. The `CMD ["uvicorn", "app:app", ...]` means "in `app.py`, serve the FastAPI object named `app`" (module:variable).
+- the **`redis`** Python package: the client library that talks to the Redis service.
 
-This project reuses `HEALTHCHECK` (lab-03) in the Dockerfile and `depends_on: condition: service_healthy` (lab-06) in `compose.yaml` — that pairing is why `api` waits for `cache` to be ready, not just started. Recap, not new material.
+This project reuses `HEALTHCHECK` (lab-03) in the Dockerfile and `depends_on: condition: service_healthy` (lab-06) in `compose.yaml`; that pairing is why `api` waits for `cache` to be ready, not merely started. Recap, not new material.
 
 ## Layout
 
@@ -35,11 +35,11 @@ docker compose logs -f api
 
 ## Endpoints
 
-- `GET /` — hello + hostname → `{"hello":"world","host":"<id>","pid":1}`
-- `GET /hits` — increments and returns the counter → `{"hits":N}`
-- `GET /healthz` — used by Compose healthcheck → `{"ok":true}`
+- `GET /`: hello + hostname → `{"hello":"world","host":"<id>","pid":1}`
+- `GET /hits`: increments and returns the counter → `{"hits":N}`
+- `GET /healthz`: used by Compose healthcheck → `{"ok":true}`
 
-With Redis down (`docker compose stop cache`), `/hits` and `/healthz` return HTTP 503 with body `{"detail":"redis down: ..."}` — that's the failure exercise 1 asks you to induce.
+With Redis down (`docker compose stop cache`), `/hits` and `/healthz` return HTTP 503 with body `{"detail":"redis down: ..."}`. That is the failure exercise 1 asks you to induce.
 
 ## Exercises
 

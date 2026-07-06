@@ -1,4 +1,4 @@
-# agent-helper.yaml — a complete agent as a Kubernetes object. No tools yet (lab-03).
+# agent-helper.yaml - a complete agent as a Kubernetes object. No tools yet (lab-03).
 # v1alpha2: agents are typed. A managed (controller-run) agent is `type: Declarative`,
 # with the model + prompt nested under `declarative:`. `description` stays on `spec`.
 apiVersion: kagent.dev/v1alpha2

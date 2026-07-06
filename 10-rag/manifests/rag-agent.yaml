@@ -1,4 +1,4 @@
-# rag-agent.yaml — a kagent Agent that calls RETRIEVAL as a tool (agentic RAG).
+# rag-agent.yaml - a kagent Agent that calls RETRIEVAL as a tool (agentic RAG).
 #
 # This is lab-03's payload and the tie to Phase 07 lab-03: same RemoteMCPServer + toolNames
 # allow-list idiom, but the tool is now `retrieve` from YOUR retrieval-mcp server, not the
@@ -7,9 +7,9 @@
 # answers directly; ask it something runbook-specific and it should reach for the tool.
 #
 # Prereq: Phase 07 (kagent installed; ModelConfig `vllm` in the kagent namespace, pointing
-# at the chat vLLM — see 07-kagent/manifests/modelconfig-vllm.yaml). Point that ModelConfig
+# at the chat vLLM - see 07-kagent/manifests/modelconfig-vllm.yaml). Point that ModelConfig
 # at your Phase 06 GATEWAY instead of vLLM directly to make the generation call inherit the
-# rag-route token budget — agentic RAG governed by your platform.
+# rag-route token budget - agentic RAG governed by your platform.
 ---
 # Register YOUR retrieval MCP server as a tool catalog kagent can discover.
 apiVersion: kagent.dev/v1alpha2

@@ -1,4 +1,4 @@
-# podmonitor-gateway.yaml — scrape the kgateway data-plane proxy (Envoy/agentgateway).
+# podmonitor-gateway.yaml - scrape the kgateway data-plane proxy (Envoy/agentgateway).
 #
 # Why a PodMonitor and not a ServiceMonitor here: the proxy's Prometheus stats live on
 # the ADMIN/stats port 19000 at /stats/prometheus, which is NOT in the routable

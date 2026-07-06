@@ -1,4 +1,4 @@
-# ingest-job.yaml — run the ingest once. A Job (not a Deployment): it runs to completion
+# ingest-job.yaml - run the ingest once. A Job (not a Deployment): it runs to completion
 # and stops. Re-run with `kubectl delete job rag-ingest && kubectl apply -f ...`.
 #
 # It mounts the corpus + script from the ConfigMap and talks to two in-cluster Services by

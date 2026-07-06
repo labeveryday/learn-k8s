@@ -1,10 +1,10 @@
-# retrieval-mcp-server.yaml — expose RETRIEVAL as an MCP tool, in-cluster.
+# retrieval-mcp-server.yaml - expose RETRIEVAL as an MCP tool, in-cluster.
 #
 # lab-03's whole point: retrieval stops being a hardcoded pipeline step and becomes a TOOL
 # an agent DECIDES to call. To do that for a kagent Agent, retrieval must speak MCP. This
 # Deployment runs a tiny MCP server (stdlib HTTP, streamable-HTTP transport) exposing one
 # tool: `retrieve(query, top_k)`. The tool does the SAME embed -> top-k search you ran by
-# hand in lab-02 — embed the query via vLLM, search Qdrant, return the chunk texts.
+# hand in lab-02 - embed the query via vLLM, search Qdrant, return the chunk texts.
 #
 # The server code lives in the ConfigMap below so the lab stays one `kubectl apply`. In a
 # real build you'd bake this into an image; the ConfigMap keeps it readable and editable.
@@ -21,7 +21,7 @@
 #     def retrieve(query: str, top_k: int = 3) -> str: ...
 #     mcp.run(transport="streamable-http")
 # Either way, if discovery fails, read the RemoteMCPServer conditions (the lab's "Break it"
-# shows where) — don't guess.
+# shows where) - don't guess.
 apiVersion: v1
 kind: ConfigMap
 metadata:

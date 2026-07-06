@@ -1,4 +1,4 @@
-# load-generator.yaml — a throwaway Job that hammers vLLM so the metrics MOVE (lab-01).
+# load-generator.yaml - a throwaway Job that hammers vLLM so the metrics MOVE (lab-01).
 #
 # Observability is invisible on an idle system. This Job fires a burst of concurrent
 # chat completions at the in-cluster vLLM Service so you can WATCH the golden signals

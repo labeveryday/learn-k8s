@@ -1,6 +1,6 @@
-# rag-route.yaml — a dedicated gateway route for RAG generation traffic.
+# rag-route.yaml - a dedicated gateway route for RAG generation traffic.
 #
-# RAG's GENERATION step is just a /v1/chat/completions call to the chat vLLM (Qwen) — so it
+# RAG's GENERATION step is just a /v1/chat/completions call to the chat vLLM (Qwen) - so it
 # can ride the SAME agentgateway path you built in Phase 06. This route reuses the
 # Phase 06 AgentgatewayBackend `vllm-ai` (no new backend needed; same Qwen model) but gives
 # RAG its OWN hostname, `rag.example.com`. Why a separate route? So RAG traffic is
@@ -32,7 +32,7 @@ spec:
           kind: AgentgatewayBackend
           name: vllm-ai
 ---
-# rag-token-budget — meter RAG generation by TOKENS, on the rag route only.
+# rag-token-budget - meter RAG generation by TOKENS, on the rag route only.
 # RAG prompts are large (you stuff retrieved chunks in), so a token budget is more honest
 # here than a request count. Same AgentgatewayPolicy idiom as Phase 06 lab-02.
 apiVersion: agentgateway.dev/v1alpha1

@@ -1,0 +1,13 @@
+# ClusterIP only. Nothing outside the cluster needs to reach the agent;
+# you reach it with kubectl port-forward, and other workloads (or a
+# Gateway route, Phase 05) could reach it by name.
+apiVersion: v1
+kind: Service
+metadata:
+  name: review-agent
+spec:
+  selector:
+    app: review-agent
+  ports:
+    - port: 8080
+      targetPort: 8080

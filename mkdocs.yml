@@ -1,6 +1,6 @@
 site_name: Learn Kubernetes → an AI Platform on Akamai
 site_description: >-
-  A panel-designed, offline-first curriculum — Linux → Docker → Kubernetes → vLLM, then the
+  An offline-first curriculum: Linux → Docker → Kubernetes → vLLM, then the
   platform layer (gateways, AI gateway, agents, Wasm, Akamai LKE, RAG, observability).
 site_author: Du'An Lightfoot
 site_url: https://labeveryday.github.io/learn-k8s/
@@ -81,6 +81,8 @@ nav:
       - 01-linux/lab-02-processes-and-signals.md
       - 01-linux/lab-03-networking.md
       - 01-linux/lab-04-namespaces-and-cgroups.md
+      - 01-linux/lab-05-users-groups-and-sudo.md
+      - 01-linux/lab-06-scripting-and-services.md
       - 01-linux/exercises.md
   - 02 · Docker:
       - 02-docker/README.md
@@ -103,6 +105,8 @@ nav:
       - 03-kubernetes/lab-09-rbac-and-security.md
       - 03-kubernetes/lab-10-observability-and-debug.md
       - 03-kubernetes/lab-11-helm-and-kustomize.md
+      - 03-kubernetes/lab-12-jobs-cronjobs-daemonsets.md
+      - 03-kubernetes/lab-13-scheduling-and-quotas.md
       - 03-kubernetes/exercises.md
   - 04 · vLLM:
       - 04-vllm/README.md
@@ -124,6 +128,7 @@ nav:
       - 06-ai-gateway/lab-04-multimodel-guards.md
   - 07 · kagent:
       - 07-kagent/README.md
+      - 07-kagent/lab-00-the-agent-loop-by-hand.md
       - 07-kagent/lab-01-install-kagent.md
       - 07-kagent/lab-02-modelconfig-agent.md
       - 07-kagent/lab-03-agent-with-tools.md
@@ -153,6 +158,18 @@ nav:
       - 11-observability/lab-02-traces.md
       - 11-observability/lab-03-quality-cost.md
       - 11-observability/lab-04-langfuse.md
+  - 12 · Ship an Agent:
+      - 12-agent-deploy/README.md
+      - 12-agent-deploy/lab-01-the-agent-and-its-health.md
+      - 12-agent-deploy/lab-02-containerize.md
+      - 12-agent-deploy/lab-03-deploy-to-kubernetes.md
+      - 12-agent-deploy/lab-04-identity-state-and-rollouts.md
+  - 13 · Agent Sandbox:
+      - 13-agent-sandbox/README.md
+      - 13-agent-sandbox/lab-01-the-sandbox-on-docker.md
+      - 13-agent-sandbox/lab-02-a-pod-factory-with-rbac.md
+      - 13-agent-sandbox/lab-03-the-cell-walls.md
+      - 13-agent-sandbox/lab-04-delegation-and-the-precise-hole.md
   - Reference:
       - reference/operating-clusters.md
       - reference/kubectl-cheatsheet.md

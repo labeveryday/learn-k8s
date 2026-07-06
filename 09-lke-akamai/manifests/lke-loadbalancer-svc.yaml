@@ -1,4 +1,4 @@
-# lke-loadbalancer-svc.yaml — a LoadBalancer Service that provisions a real Akamai
+# lke-loadbalancer-svc.yaml - a LoadBalancer Service that provisions a real Akamai
 # NodeBalancer (on kind this would sit <pending> forever). The linode-* annotations are
 # the only cloud-specific lines; remove them and it still works with defaults.
 apiVersion: apps/v1

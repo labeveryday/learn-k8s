@@ -1,4 +1,4 @@
-# Phase 4 — point Kubernetes at the ollama already running on your Mac.
+# Phase 4 - point Kubernetes at the ollama already running on your Mac.
 # No image pulls, no model re-downloads. You learn the K8s abstractions
 # (Service, DNS, decoupling) using your existing local LLMs.
 #

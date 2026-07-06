@@ -2,28 +2,31 @@
 
 **📖 Read it online: <https://labeveryday.github.io/learn-k8s/>**
 
-A fast-track, offline-first curriculum designed by a panel:
-- **Stanford (distributed systems lens)** — *why* each layer exists, what problem it solves.
-- **MIT (systems lens)** — the kernel/protocol primitives beneath each tool. No magic.
-- **Kelsey Hightower (pragmatic lens)** — build from primitives; avoid cargo-cult YAML; production mindset from day one.
+A fast-track, offline-first curriculum. Three ideas run through every phase:
+
+- **Why each layer exists**: what problem it solves and what it replaced.
+- **The primitives underneath**: the kernel and protocol machinery beneath each tool, so nothing stays a black box.
+- **Build from primitives**: no cargo-cult YAML, and a production mindset from day one.
 
 ## Target outcome
 
 The **core curriculum (Phases 00–04)** gets you to a confident operator. After it you can:
-1. Operate confidently in a Linux shell and reason about processes, files, and networking.
+1. Operate a Linux host: shell, processes, files, networking, users and permissions, services, and shell scripts.
 2. Build, run, and debug Docker containers and multi-service Compose stacks.
 3. Run a local Kubernetes cluster, deploy apps with raw manifests, and debug them with `kubectl`.
 4. Deploy an LLM inference workload (vLLM, CPU-mode on Mac) behind a K8s Service, with probes, limits, and basic autoscaling.
 
-The **optional Platform Track (Phases 05–11)** adds the layer above the workload — the
+The **optional Platform Track (Phases 05–13)** adds the layer above the workload: the
 platform other people call. After it you can also:
 5. Route traffic with the **Gateway API** standard (kgateway, Kong) instead of legacy Ingress.
 6. Put vLLM behind an **AI gateway** with token rate limits, multi-model routing, and prompt guards.
 7. Run **AI agents as Kubernetes resources** (kagent) that call your own vLLM and MCP tools.
-8. Build **WebAssembly** workloads on k8s with Spin / SpinKube — and ship the same module serverless on **Akamai Functions**.
-9. Take the whole stack to **Akamai LKE** — NodeBalancer, Block Storage CSI, and GPU node pools.
+8. Build **WebAssembly** workloads on k8s with Spin / SpinKube, and ship the same module serverless on **Akamai Functions**.
+9. Take the whole stack to **Akamai LKE**: NodeBalancer, Block Storage CSI, and GPU node pools.
 10. Build **RAG** over your own data (embeddings + a vector store) as a workload on the platform.
-11. **Observe** it end to end — metrics, traces, and an eval-based quality score (Prometheus/Grafana + Langfuse).
+11. **Observe** it end to end: metrics, traces, and an eval-based quality score (Prometheus/Grafana + Langfuse).
+12. **Ship an agent by hand**: a code-review agent with a Flask health surface, built into a non-root image and deployed with Secrets, an initContainer, probes, a singleton rollout strategy, and a persistent ledger.
+13. **Run a code sandbox**: a self-hosted code interpreter whose manager mints one hardened pod per session with scoped RBAC, enforced NetworkPolicy egress, and an in-cell worker agent wired to your own vLLM.
 
 ## Pacing
 
@@ -36,22 +39,22 @@ Phase weights (of total time): Linux 15%, Docker 20%, Kubernetes 50%, vLLM 15%.
 
 ## Structure
 
-The **core curriculum** is Phases 00–04 — that's the part everyone should do:
+The **core curriculum** is Phases 00–04, the part everyone should do:
 
 ```
 00-prep/        One-time setup + offline caching (needs internet)
-01-linux/       Shell, processes, networking, namespaces/cgroups
+01-linux/       Shell, processes, networking, namespaces/cgroups, users, services, scripting
 02-docker/      Containers, images, Compose, a real project
 03-kubernetes/  Architecture, workloads, networking, storage, RBAC, Helm
 04-vllm/        Capstone: LLM serving on Kubernetes
-reference/      Cheatsheets — keep these open while working
+reference/      Cheatsheets - keep these open while working
 ```
 
-### Platform Track (Phases 05–11) — optional second half
+### Platform Track (Phases 05–13): optional second half
 
 Once the core is solid, the Platform Track builds the **platform layer** on top of the
 workload: the gateways, AI gateway, agents, and managed infra that turn "I can run a
-pod" into "I run an AI platform other people can call." These layers stack — each phase
+pod" into "I run an AI platform other people can call." The layers stack; each phase
 is one floor of the same building.
 
 ```
@@ -62,21 +65,23 @@ is one floor of the same building.
 09-lke-akamai/   The whole stack on Akamai LKE: NodeBalancer, Block Storage CSI, GPU node pools
 10-rag/          RAG Q&A over your data: embeddings + vector store (Qdrant), generation through your gateway, agentic retrieval
 11-observability/  See the platform: metrics, traces, and an eval quality score across every layer (Prometheus, Grafana, OTel, Tempo)
+12-agent-deploy/   Ship a real agent by hand: health surface, image, Secrets, initContainer, probes, singleton rollout, durable state
+13-agent-sandbox/  Self-hosted code interpreter: a pod-factory manager with scoped RBAC, hardened cells, enforced NetworkPolicy, an in-cell worker agent
 ```
 
-**Read [`PLATFORM-TRACK.md`](./PLATFORM-TRACK.md) first** — it has the full mental model
-(the request-path diagram and how kgateway, Kong, vLLM, kagent, and Spin actually relate),
+Read [`PLATFORM-TRACK.md`](./PLATFORM-TRACK.md) first. It has the full mental model
+(the request-path diagram and how kgateway, Kong, vLLM, kagent, and Spin relate),
 the prerequisites, and a suggested pace. Don't start 05 without it.
 
 Each phase folder has its own `README.md` with objectives, a reading list, and numbered labs. Do the labs in order; each builds on the last.
 
 ## How to study
 
-**Kelsey's rule:** `kubectl explain <resource>` (and `man <cmd>`, `docker <cmd> --help`) before Google. When you don't know a field, ask the tool.
+**Ask the tool first:** `kubectl explain <resource>` (and `man <cmd>`, `docker <cmd> --help`) before Google. When you don't know a field, ask the tool.
 
-**MIT's rule:** Before you use a command, know what syscall or primitive it wraps. `strace -f` is your friend.
+**Know the layer below:** before you use a command, know what syscall or primitive it wraps. `strace -f` is your friend.
 
-**Stanford's rule:** For every new abstraction, answer three questions in your notes:
+**Three questions for every abstraction:** answer these in your notes:
 1. What problem does it solve?
 2. What does it replace?
 3. What's the next layer down?
@@ -89,10 +94,10 @@ Each phase folder has its own `README.md` with objectives, a reading list, and n
 4. Finish the core (00–04) before touching the Platform Track. When you're ready for the
    second half, read [`PLATFORM-TRACK.md`](./PLATFORM-TRACK.md), then start `05-gateway-api/README.md`.
 
-## Panel notes
+## Keep in mind
 
-> **Stanford:** "You are not learning tools. You are learning a *stack of abstractions* built over 50 years. Each phase reveals the layer below. Treat it as such."
->
-> **MIT:** "If you can't explain what `docker run` does in terms of `clone(2)`, `unshare(2)`, and `pivot_root(2)`, you don't understand it yet. Lab 01-04 fixes that."
->
-> **Kelsey:** "The fastest way to learn Kubernetes is to deploy something real, break it, and read the error. Everything else is theater."
+You are not learning tools. You are learning a stack of abstractions built over 50 years. Each phase reveals the layer below; treat it that way.
+
+If you can't explain what `docker run` does in terms of `clone(2)`, `unshare(2)`, and `pivot_root(2)`, you don't understand it yet. Lab 01-04 fixes that.
+
+The fastest way to learn Kubernetes is to deploy something real, break it, and read the error. Everything else is theater.

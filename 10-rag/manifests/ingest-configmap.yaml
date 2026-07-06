@@ -1,12 +1,12 @@
-# ingest-configmap.yaml — the tiny corpus + the ingest script, mounted into the ingest Job.
+# ingest-configmap.yaml - the tiny corpus + the ingest script, mounted into the ingest Job.
 #
 # Two files in one ConfigMap:
-#   corpus.md  — the "your data" the LLM was never trained on (deliberately niche so you can
+#   corpus.md - the "your data" the LLM was never trained on (deliberately niche so you can
 #                prove retrieval is doing the work, not the model's memory).
-#   ingest.py  — chunk -> embed (vLLM /v1/embeddings) -> upsert (Qdrant) -> create payload.
+#   ingest.py - chunk -> embed (vLLM /v1/embeddings) -> upsert (Qdrant) -> create payload.
 #
 # The script uses only the Python stdlib (urllib + json), so the Job can run on a plain
-# python:3.12-slim image with no pip install — keeps the lab fast and offline-friendly.
+# python:3.12-slim image with no pip install - keeps the lab fast and offline-friendly.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -14,7 +14,7 @@ metadata:
   namespace: default
 data:
   corpus.md: |
-    # Acme Cloud internal runbook (fictional — NOT in any model's training data)
+    # Acme Cloud internal runbook (fictional - NOT in any model's training data)
 
     ## Region codes
     Acme Cloud regions use a 5-character code: a 2-letter continent, a hyphen, and a
@@ -58,7 +58,7 @@ data:
         return out["data"][0]["embedding"]
 
     # 1. CHUNK: split the corpus on markdown headings. Each "## section" is one chunk.
-    #    Chunking is the whole game in lab-02 — a chunk is the unit you retrieve and stuff
+    #    Chunking is the whole game in lab-02 - a chunk is the unit you retrieve and stuff
     #    into the prompt, so it must be small enough to fit several into the context window.
     raw = open("/corpus/corpus.md").read()
     chunks = [c.strip() for c in re.split(r"(?=^## )", raw, flags=re.M) if c.strip()]

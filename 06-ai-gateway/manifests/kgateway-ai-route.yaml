@@ -1,4 +1,4 @@
-# kgateway-ai-route.yaml — route OpenAI chat traffic to the AI Backend.
+# kgateway-ai-route.yaml - route OpenAI chat traffic to the AI Backend.
 # Compare to 05-gateway-api/manifests/httpbin-route.yaml: only the backendRef target
 # changes (an AgentgatewayBackend of group agentgateway.dev / kind AgentgatewayBackend,
 # not a plain Service). parentRef targets the "http" Gateway in kgateway-system,

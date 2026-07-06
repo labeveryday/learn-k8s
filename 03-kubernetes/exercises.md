@@ -38,13 +38,13 @@ Steps:
    curl http://localhost:8000/hits
    ```
 5. Break Redis: `kubectl -n demo delete pod -l app=cache`. Observe API readiness flip until Redis recovers.
-6. Scale: `kubectl -n demo scale deploy/api --replicas=5`. Hit `/` repeatedly — note `host` changes. Each Pod returns its own hostname (= Pod name) in `host`; seeing it vary proves the Service spread requests across the 5 replicas. It's not strict round-robin — kube-proxy picks an endpoint roughly at random per connection.
-7. Add an HPA. An **HPA** (HorizontalPodAutoscaler) is a controller that watches a metric and adds/removes replicas to hit a target — here, keep average CPU near 50% of each Pod's CPU *request*, between 2 and 10 replicas. It needs metrics-server (installed in lab-10); without it, `kubectl get hpa` shows `TARGETS: <unknown>/50%` and never scales. The capstone Pods already set CPU requests, so once metrics-server is up you'll see a real percentage.
+6. Scale: `kubectl -n demo scale deploy/api --replicas=5`. Hit `/` repeatedly and note `host` changes. Each Pod returns its own hostname (= Pod name) in `host`; seeing it vary proves the Service spread requests across the 5 replicas. It's not strict round-robin; kube-proxy picks an endpoint at random per connection.
+7. Add an HPA. An **HPA** (HorizontalPodAutoscaler) is a controller that watches a metric and adds/removes replicas to hit a target: here, keep average CPU near 50% of each Pod's CPU *request*, between 2 and 10 replicas. It needs metrics-server (installed in lab-10); without it, `kubectl get hpa` shows `TARGETS: <unknown>/50%` and never scales. The capstone Pods already set CPU requests, so once metrics-server is up you'll see a real percentage.
    ```bash
    kubectl -n demo autoscale deploy/api --min=2 --max=10 --cpu-percent=50
    kubectl -n demo get hpa
    ```
-   To actually see it scale, generate load (e.g. a busybox pod looping `wget -q -O- http://api.demo.svc.cluster.local:8000/` in the `demo` namespace) and watch `kubectl -n demo get hpa -w`.
+   To see it scale, generate load (e.g. a busybox pod looping `wget -q -O- http://api.demo.svc.cluster.local:8000/` in the `demo` namespace) and watch `kubectl -n demo get hpa -w`.
 8. Put it behind an Ingress (if you did Lab 07).
 
 ## Self-check

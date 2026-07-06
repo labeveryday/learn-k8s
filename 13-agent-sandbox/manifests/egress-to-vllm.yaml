@@ -1,0 +1,29 @@
+# The precise hole (lab 04): sandbox pods may reach the vLLM workload in
+# the default namespace on its serving port, and nothing else changes.
+#
+# Contrast this with widening the ipBlock exceptions in
+# sandbox-allow-internet: an ipBlock names an address range and rots when
+# the Service IP changes; these selectors name a workload, and the CNI
+# resolves membership as pods come and go. The hole is exactly one
+# workload wide.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-vllm
+  namespace: strands-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      app: strands-sandbox      # applies to every sandbox, network=True or not
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: default
+          podSelector:
+            matchLabels:
+              app: vllm         # the Phase 04 workload, named by label
+      ports:
+        - protocol: TCP
+          port: 8000

@@ -1,0 +1,12 @@
+# Non-secret configuration: which model endpoint, which repo to review.
+# Config that is safe to read belongs here; anything you would not paste
+# into a chat message belongs in the Secret (Phase 03 lab-05 rule).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: review-agent-config
+data:
+  OPENAI_BASE_URL: "http://vllm.default.svc.cluster.local:8000/v1"  # your vLLM (Phase 04/06)
+  MODEL_ID: "Qwen/Qwen2.5-0.5B-Instruct"                            # the model vLLM serves
+  REPO_URL: "https://github.com/labeveryday/claude-put-in-work.git" # what the agent reviews
+  REPO_DIR: "/work/repo"                                            # where the initContainer clones it
