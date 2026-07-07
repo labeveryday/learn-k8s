@@ -1,0 +1,34 @@
+services:
+  manager:
+    build: ./manager
+    ports:
+      - "8700:8700"
+    environment:
+      SANDBOX_BACKEND: docker
+      SANDBOX_IMAGE: strands-sandbox-runtime:latest
+      MANAGER_TOKEN: ${MANAGER_TOKEN:-change-me}
+      # Env vars copied into every sandbox (model creds for the worker agent)
+      SANDBOX_PASSTHROUGH_ENV: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN,AWS_DEFAULT_REGION,AWS_REGION,ANTHROPIC_API_KEY,OPENAI_API_KEY,WORKER_MODEL_PROVIDER,WORKER_MODEL_ID
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - internal
+      - egress
+    restart: unless-stopped
+
+  # Build-only helper so `docker compose build` produces the runtime image.
+  runtime:
+    build: ./runtime
+    image: strands-sandbox-runtime:latest
+    profiles: ["build"]
+    command: ["true"]
+
+networks:
+  internal:
+    name: strands-sbx-internal
+    internal: true
+  egress:
+    name: strands-sbx-egress

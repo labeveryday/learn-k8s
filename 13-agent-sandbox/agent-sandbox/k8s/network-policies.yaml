@@ -1,0 +1,70 @@
+# Requires a CNI that enforces NetworkPolicy (Calico, Cilium, VPC CNI with
+# policy enabled, etc).
+#
+# Model:
+#   - Sandbox pods (app=strands-sandbox) accept ingress only from the manager.
+#   - Egress is denied by default. DNS is allowed for everyone.
+#   - Sessions created with network=True get label egress=allowed and may
+#     reach the internet, but never RFC1918 ranges (protects the cluster/VPC).
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-lockdown
+  namespace: strands-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      app: strands-sandbox
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: sandbox-manager
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-dns
+  namespace: strands-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      app: strands-sandbox
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-internet
+  namespace: strands-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      app: strands-sandbox
+      egress: allowed
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.169.254/32
